@@ -1,0 +1,35 @@
+# Build outputs
+build/
+Debug/
+.pio/
+.platformio-home/
+$PROJECT_BUILD_DIR/
+
+# Editor and local tool state
+.vscode/ipch/
+.idea/
+.claude/
+
+# Python cache and local environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Embedded build artifacts
+*.bin
+*.elf
+*.map
+*.o
+*.d
+*.a
+*.out
+
+# Archives and generated reports
+*.zip
+*.rar
+*.7z
+
+# Logs
+logs/
+*.log
