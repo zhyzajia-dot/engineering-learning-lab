@@ -1,0 +1,28 @@
+{
+  "profile": "GIMBAL_PID_V10",
+  "score_profile": "PID_FAST_FOLLOW_STABLE_V10",
+  "updated_at": "2026-07-07T19:42:13",
+  "total_score": 436.03499999999997,
+  "median_area": 29070.0,
+  "follow": {
+    "ff_gain": 0.03,
+    "ff_max": 4.0,
+    "integral_limit": 10.0,
+    "large_i_scale": 0.14,
+    "score": 421.067
+  },
+  "x": {
+    "kp": 0.14,
+    "ki": 0.335,
+    "kd": 0.003,
+    "polarity": 1,
+    "score": 217.105
+  },
+  "y": {
+    "kp": 0.1,
+    "ki": 0.32,
+    "kd": 0.0,
+    "polarity": 1,
+    "score": 218.93
+  }
+}

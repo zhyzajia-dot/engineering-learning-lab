@@ -1,0 +1,2 @@
+# 串口收发库；tkinter 是 Python 自带无需列出
+pyserial>=3.5
