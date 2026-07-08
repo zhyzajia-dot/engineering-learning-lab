@@ -1,39 +1,180 @@
 # Engineering Learning Lab
 
-This repository collects learning and engineering projects.
+这个仓库用来统一管理学习和工程代码，方便回退版本、同步到 GitHub、和朋友协作。
 
-## Projects
+## 目录
 
-- `esp32-radar/`: ESP32-S3 radar vital-sign firmware versions, including the current self-hosted server/WeChat build, the TuyaLink archive, and the legacy MQTT/InfluxDB archive.
-- `k230-pid-gimbal/`: K230 visual gimbal tracking and PID auto-tuning project, including the PC tuning GUI.
-- `mspm0-pid-car/pid-lab/`: MSPM0G3507 PID lab firmware, host auto-tuning tool, and ESP8266 wireless serial bridge.
-- `mspm0-pid-car/working-car/`: working MSPM0G3507 car firmware used as the race/project baseline.
+- `esp32-radar/`: ESP32-S3 雷达生命体征固件，包含当前微信小程序/自有服务器版、涂鸦版、旧 MQTT + InfluxDB 版。
+- `k230-pid-gimbal/`: K230 二维云台视觉跟踪和 PID 自动调参工程，包含 PC 上位机。
+- `mspm0-pid-car/pid-lab/`: MSPM0G3507 PID 实验工程，包含上位机和 ESP8266 无线串口桥。
+- `mspm0-pid-car/working-car/`: MSPM0G3507 小车可工作 baseline 工程。
 
-## ESP32 Builds
+## 第一次下载
 
-From `esp32-radar/`:
+朋友第一次使用时执行：
 
 ```powershell
-# Self-hosted server + WeChat mini program
-platformio run -e freenove_esp32_s3_wroom
-
-# TuyaLink
-platformio run -e tuya_freenove_esp32_s3_wroom
-
-# Legacy MQTT + InfluxDB
-platformio run -e legacy_freenove_esp32_s3_wroom
+cd F:\
+git clone https://github.com/zhyzajia-dot/engineering-learning-lab.git
+cd F:\engineering-learning-lab
 ```
 
-## Daily Git Flow
+你现在本地已经有：
 
 ```powershell
+F:\engineering-learning-lab
+```
+
+以后主要改这个目录里的代码。
+
+## 每天怎么用 Git
+
+开始写代码前先同步：
+
+```powershell
+cd F:\engineering-learning-lab
 git pull
+```
+
+查看当前改了什么：
+
+```powershell
 git status
+```
+
+改完后提交：
+
+```powershell
 git add .
-git commit -m "describe the change"
+git commit -m "说明这次改了什么"
 git push
 ```
 
-## Notes
+提交信息例子：
 
-Generated folders such as `.pio/`, `Debug/`, `logs/`, `__pycache__/`, build outputs, and compressed archives are intentionally ignored. Rebuild dependencies locally with PlatformIO, Code Composer Studio, or the relevant Python requirements files.
+```powershell
+git commit -m "fix esp32 radar upload interval"
+git commit -m "add k230 pid tuning notes"
+git commit -m "update mspm0 square tracking parameters"
+```
+
+## 怎么回退
+
+查看历史版本：
+
+```powershell
+git log --oneline
+```
+
+如果某个文件改坏了，还没有提交：
+
+```powershell
+git restore 文件名
+```
+
+如果已经提交了，想安全撤销某次提交：
+
+```powershell
+git revert 提交ID
+```
+
+不熟悉时优先用 `git revert`，它比较安全。
+
+## 多人协作规则
+
+1. 写代码前先 `git pull`。
+2. 一次提交只做一类修改，不要把 ESP32、K230、MSPM0 无关改动混在一起。
+3. 提交信息写清楚，不要只写 `update`。
+4. 如果 `git push` 失败，先执行 `git pull`，解决冲突后再 push。
+5. 编译生成目录、日志、压缩包不要上传。
+
+## ESP32 快速使用
+
+当前主要开发目录：
+
+```powershell
+F:\engineering-learning-lab\esp32-radar\current-server-wechat
+```
+
+编译自有服务器 + 微信小程序版：
+
+```powershell
+cd F:\engineering-learning-lab\esp32-radar\current-server-wechat
+platformio run -e freenove_esp32_s3_wroom
+```
+
+编译涂鸦版：
+
+```powershell
+platformio run -e tuya_freenove_esp32_s3_wroom
+```
+
+编译旧 MQTT + InfluxDB 版：
+
+```powershell
+platformio run -e legacy_freenove_esp32_s3_wroom
+```
+
+烧录时在对应环境后加 `-t upload`：
+
+```powershell
+platformio run -e freenove_esp32_s3_wroom -t upload
+```
+
+## K230 快速使用
+
+主程序：
+
+```text
+k230-pid-gimbal/auto_pid_tracker.py
+```
+
+PC 上位机：
+
+```powershell
+cd F:\engineering-learning-lab\k230-pid-gimbal\host
+.\start_gui.bat
+```
+
+## MSPM0 快速使用
+
+PID 实验工程：
+
+```text
+mspm0-pid-car/pid-lab/
+```
+
+工作小车 baseline：
+
+```text
+mspm0-pid-car/working-car/
+```
+
+PID 上位机：
+
+```powershell
+cd F:\engineering-learning-lab\mspm0-pid-car\pid-lab\HOST
+.\start_autotune.bat
+```
+
+## 不要上传的东西
+
+这些已经在 `.gitignore` 中排除了：
+
+```text
+.pio/
+.platformio-home/
+Debug/
+build/
+logs/
+__pycache__/
+*.zip
+*.rar
+*.bin
+*.elf
+*.map
+*.o
+*.d
+```
+
+如果发现 `git status` 里出现这些文件，先不要提交，应该检查 `.gitignore`。
