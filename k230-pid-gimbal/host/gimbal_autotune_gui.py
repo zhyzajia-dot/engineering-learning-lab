@@ -27,15 +27,21 @@ IMAGE_HEIGHT = 320
 TELEMETRY_MIN_VALID_AREA = 1000
 TELEMETRY_AREA_RATIO_MIN = 0.20
 TELEMETRY_AREA_RATIO_MAX = 5.00
-CONTROL_PROFILE = "GIMBAL_PID_V10"
-PID_SCORE_PROFILE = "PID_FAST_FOLLOW_STABLE_V10"
+CONTROL_PROFILE = "GIMBAL_PID_V16"
+PID_SCORE_PROFILE = "PID_GEARED_SYSID_V16"
 DEFAULT_TRACK_KI = 0.25
-DEFAULT_TRACK_VELOCITY_FF_GAIN = 0.032
-DEFAULT_MAX_TRACK_VELOCITY_FF_RPM = 4.0
-DEFAULT_MAX_TRACK_INTEGRAL_RPM = 12.0
+DEFAULT_TRACK_VELOCITY_FF_GAIN = 0.045
+DEFAULT_MAX_TRACK_VELOCITY_FF_RPM = 8.0
+DEFAULT_MAX_TRACK_INTEGRAL_RPM = 16.0
 DEFAULT_TRACK_LARGE_ERROR_INTEGRAL_SCALE = 0.15
 COMPATIBLE_CHAMPION_PROFILES = (
     CONTROL_PROFILE,
+    "GIMBAL_PID_V15",
+    "GIMBAL_PID_V14",
+    "GIMBAL_PID_V13",
+    "GIMBAL_PID_V12",
+    "GIMBAL_PID_V11",
+    "GIMBAL_PID_V10",
     "GIMBAL_PID_V9D",
     "GIMBAL_PID_V9C",
     "GIMBAL_PID_V9",
@@ -240,29 +246,29 @@ class GimbalApp(tk.Tk):
                 or int(data["x"]["polarity"]) not in (-1, 1)
                 or int(data["y"]["polarity"]) not in (-1, 1)
                 or not (
-                    0.015
+                    0.020
                     <= float(data["follow"]["ff_gain"])
-                    <= 0.070
+                    <= 0.090
                 )
                 or not (
-                    2.0
+                    3.0
                     <= float(data["follow"]["ff_max"])
-                    <= 8.0
+                    <= 12.0
                 )
                 or not (
-                    6.0
+                    8.0
                     <= float(data["follow"]["integral_limit"])
-                    <= 18.0
+                    <= 22.0
                 )
                 or not (
                     0.08
                     <= float(data["follow"]["large_i_scale"])
-                    <= 0.35
+                    <= 0.40
                 )
             ):
                 return None
             # Old gains remain loadable, but their scores are marked as a
-            # different test profile and cannot defend against a V10 PID run.
+            # different test profile and cannot defend against a V16 PID run.
             data["profile"] = CONTROL_PROFILE
             return data
         except (OSError, ValueError, TypeError, KeyError):
@@ -463,10 +469,10 @@ class GimbalApp(tk.Tk):
             and math.isfinite(follow["ff_max"])
             and math.isfinite(follow["integral_limit"])
             and math.isfinite(follow["large_i_scale"])
-            and 0.015 <= follow["ff_gain"] <= 0.070
-            and 2.0 <= follow["ff_max"] <= 8.0
-            and 6.0 <= follow["integral_limit"] <= 18.0
-            and 0.08 <= follow["large_i_scale"] <= 0.35
+            and 0.020 <= follow["ff_gain"] <= 0.090
+            and 3.0 <= follow["ff_max"] <= 12.0
+            and 8.0 <= follow["integral_limit"] <= 22.0
+            and 0.08 <= follow["large_i_scale"] <= 0.40
         ):
             self._append_log("FOLLOW params invalid")
             return None
@@ -535,7 +541,7 @@ class GimbalApp(tk.Tk):
             self.state_var.set("调参完成；环境不可比，冠军保持不变")
             return
 
-        # V10 retests the loaded incumbent on the same target before it can
+        # V16 retests the loaded incumbent on the same target before it can
         # advance, then runs coarse/local/fine PID finals and a follow
         # profile final.
         # Therefore the K230 result is already a head-to-head winner under

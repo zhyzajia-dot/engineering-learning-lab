@@ -50,15 +50,15 @@ MIN_RECTANGLE_AREA = 1200
 MIN_EDGE_LENGTH = 18
 MAX_EDGE_LENGTH_RATIO = 5.5
 MIN_QUAD_FILL_RATIO = 0.32
-DETECTION_HOLD_FRAMES = 5
+DETECTION_HOLD_FRAMES = 3
 DETECTION_HOLD_MAX_RPM = 4.0
 INITIAL_LOCK_CONFIRM_FRAMES = 2
 TRACK_ASSOCIATION_LIMIT = 1.35
 TRACK_MAX_CENTER_JUMP_PIXELS = 58.0
 TRACK_MAX_AXIS_JUMP_PIXELS = 50.0
-TRACK_REACQUIRE_ASSOCIATION_LIMIT = 2.35
-TRACK_REACQUIRE_MAX_CENTER_JUMP_PIXELS = 125.0
-TRACK_REACQUIRE_MAX_AXIS_JUMP_PIXELS = 105.0
+TRACK_REACQUIRE_ASSOCIATION_LIMIT = 3.20
+TRACK_REACQUIRE_MAX_CENTER_JUMP_PIXELS = 220.0
+TRACK_REACQUIRE_MAX_AXIS_JUMP_PIXELS = 200.0
 TRACK_PREDICT_ALPHA = 0.45
 TRACK_MAX_PREDICT_PIXELS_PER_FRAME = 26.0
 TRACK_SUSPICIOUS_JUMP_PIXELS = 34.0
@@ -83,15 +83,23 @@ Y_RX_PIN = 6     # 40Pin pin 13, UART2_RX
 
 BAUD_RATE = 115200
 MOTOR_ADDRESS = 1
-MOTOR_ACCELERATION = 0
+MOTOR_FIRMWARE_MODE = "EMM"
+MOTOR_LINK_MODE = "TTL"
+MOTOR_ACCELERATION = 220
+MOTOR_X_ACCELERATION_RPM_S = 1800
+MOTOR_CLOSED_LOOP_MAX_CURRENT_MA = 4200
 MOTOR_HEARTBEAT_TIMEOUT_MS = 500
 MOTOR_KEEPALIVE_PERIOD_MS = 150
 
-TUNE_MAX_RPM = 12.0
-RECENTER_MAX_RPM = 16.0
-TRACK_MAX_RPM = 20.0
-Y_TUNE_MAX_RPM = 8.0
-Y_RECENTER_MAX_RPM = 10.0
+# This gimbal uses a geared, higher-load mechanism.  The previous limits were
+# tuned for a light direct-drive frame and could not reliably overcome static
+# friction after a direction probe or while returning to centre.
+TUNE_MAX_RPM = 45.0
+RECENTER_MAX_RPM = 45.0
+X_TRACK_MAX_RPM = 60.0
+Y_TUNE_MAX_RPM = 40.0
+Y_RECENTER_MAX_RPM = 40.0
+Y_TRACK_MAX_RPM = 50.0
 DEADBAND_PIXELS = 3
 MIN_ACTIVE_ERROR_PIXELS = 5
 RECENTER_ACCEPT_PIXELS = 4
@@ -99,40 +107,48 @@ DISTANCE_AREA_REFERENCE = 12000.0
 MAX_DISTANCE_GAIN = 1.8
 LARGE_ERROR_START_PIXELS = 18
 LARGE_ERROR_FULL_PIXELS = 70
-MAX_LARGE_ERROR_GAIN = 1.6
+MAX_LARGE_ERROR_GAIN = 2.2
 ERROR_FILTER_ALPHA = 0.65
-DERIVATIVE_LIMIT_PX_PER_SECOND = 120.0
-MAX_D_TO_P_RATIO = 0.50
-MIN_ACTIVE_RPM = 1.0
+DERIVATIVE_LIMIT_PX_PER_SECOND = 240.0
+MAX_D_TO_P_RATIO = 1.00
+MIN_ACTIVE_RPM = 2.4
 DEFAULT_TRACK_KI = 0.25
 MIN_SUSTAINED_TRACK_KI = 0.08
 TRACK_INTEGRAL_UNWIND_MULTIPLIER = 3.0
 TRACK_INTEGRAL_ZONE_PIXELS = 36
 DEFAULT_TRACK_LARGE_ERROR_INTEGRAL_SCALE = 0.15
-DEFAULT_MAX_TRACK_INTEGRAL_RPM = 12.0
+DEFAULT_MAX_TRACK_INTEGRAL_RPM = 16.0
 TRACK_DRIVE_ACTIVE_RPM = 0.45
-DEFAULT_TRACK_VELOCITY_FF_GAIN = 0.032
+DEFAULT_TRACK_VELOCITY_FF_GAIN = 0.045
 TRACK_VELOCITY_FF_MIN_PX_PER_SECOND = 8.0
-DEFAULT_MAX_TRACK_VELOCITY_FF_RPM = 4.0
+DEFAULT_MAX_TRACK_VELOCITY_FF_RPM = 8.0
 TRACK_FAST_FF_DERIVATIVE_PX_PER_SECOND = 45.0
 TRACK_FAST_FF_ERROR_PIXELS = 8.0
-TRACK_FAST_FF_GAIN_MULTIPLIER = 1.30
-TRACK_FAST_FF_MIN_MAX_RPM = 5.5
+TRACK_FAST_FF_GAIN_MULTIPLIER = 1.55
+TRACK_FAST_FF_MIN_MAX_RPM = 9.0
+CENTER_SETTLE_FRAMES = 4
+CENTER_SETTLE_DERIVATIVE_PX_PER_SECOND = 6.0
+CENTER_RESIDUAL_DRIVE_RPM = 1.2
+GEAR_REVERSAL_BOOST_FRAMES = 3
+GEAR_REVERSAL_MAX_RPM = 14.0
 
-PROBE_RPM = 5
-PROBE_DURATION_MS = 180
-Y_PROBE_DURATION_MS = 120
+# Keep the probe deliberately slow (better torque margin) but long enough for
+# the geared mechanism to take up backlash and visibly move the target.
+X_PROBE_RPM_LEVELS = (10, 20, 35)
+Y_PROBE_RPM_LEVELS = (10, 20, 30, 40)
+PROBE_DURATION_MS = 500
+Y_PROBE_DURATION_MS = 500
 PROBE_MIN_PIXEL_CHANGE = 3
 
 KICK_TARGET_PIXELS = 90
 KICK_MIN_DEGREES = 10.0
 KICK_MAX_DEGREES = 14.0
-PID_CANDIDATE_DURATION_MS = 7400
-PID_SCORE_PROFILE = "PID_FAST_FOLLOW_STABLE_V10"
+PID_CANDIDATE_DURATION_MS = 6600
+PID_SCORE_PROFILE = "PID_GEARED_SYSID_V16"
 
-PID_COARSE_KP = (0.10, 0.16, 0.22, 0.28, 0.34)
-PID_COARSE_KI = (0.08, 0.20, 0.32)
-PID_COARSE_KD = (0.003, 0.010)
+PID_COARSE_KP = (0.14, 0.36, 0.68)
+PID_COARSE_KI = (0.12, 0.40)
+PID_COARSE_KD = (0.000, 0.025, 0.060)
 PID_PARAMETER_EPSILON = 0.0005
 PID_ROBUST_WORST_WEIGHT = 0.35
 PID_REFERENCE_EDGE_MARGIN_PIXELS = 12
@@ -143,13 +159,16 @@ PID_SATURATION_ABORT_MS = 650
 PID_RUNAWAY_ERROR_ABORT_MS = 450
 PID_SATURATION_ERROR_RATIO = 0.55
 PID_RUNAWAY_ERROR_RATIO = 1.65
+MOTOR_NO_MOTION_MIN_RPM = 8.0
+MOTOR_NO_MOTION_ABORT_MS = 800
+MOTOR_NO_MOTION_PIXEL_DELTA = 2.0
 
 FOLLOW_PROFILE_CANDIDATES = (
     # ff_gain, ff_max_rpm, integral_limit_rpm, large_error_i_scale
-    (0.030, 4.0, 11.0, 0.14),
-    (0.034, 4.5, 12.0, 0.18),
-    (0.038, 5.0, 13.0, 0.20),
-    (0.042, 5.0, 13.0, 0.22),
+    (0.035, 6.0, 14.0, 0.14),
+    (0.045, 8.0, 16.0, 0.18),
+    (0.055, 10.0, 18.0, 0.22),
+    (0.065, 12.0, 20.0, 0.26),
 )
 FOLLOW_PARAMETER_EPSILON = 0.0005
 PID_POLISH_REPEAT_COUNT = 2
@@ -160,7 +179,7 @@ TELEMETRY_PERIOD_MS = 500
 TUNE_TELEMETRY_PERIOD_MS = 100
 RECENTER_TIMEOUT_MS = 6000
 DETECTOR_VERSION = "PERSPECTIVE_QUAD_V2"
-CONTROL_PROFILE = "GIMBAL_PID_V10"
+CONTROL_PROFILE = "GIMBAL_PID_V16"
 
 
 class TuneAbort(Exception):
@@ -192,12 +211,195 @@ class ZDTMotor:
         self.last_direction = None
         self.last_speed = None
         self.last_command_ms = time.ticks_add(time.ticks_ms(), -1000)
+        self.speed_scale = 1
+        self.speed_scale_verified = False
+        self.firmware = "UNKNOWN"
+        self.firmware_verified = False
+        self.protocol_motion_verified = False
+        self.option_flags = None
+        self.turbo_enabled = False
+        self.runtime_configured = False
 
     def write(self, data):
         # Replies are not used by this real-time controller. Drain old ACKs
         # so they cannot accumulate in the small UART receive buffer.
         self.uart.read()
         return self.uart.write(bytes(data))
+
+    def configure_setting(self, command, function_code, label):
+        expected = bytes(
+            (MOTOR_ADDRESS, function_code, 0x02, 0x6B)
+        )
+        all_replies = b""
+        for _ in range(3):
+            self.write(command)
+            deadline = time.ticks_add(time.ticks_ms(), 100)
+            reply = b""
+            while time.ticks_diff(deadline, time.ticks_ms()) > 0:
+                chunk = self.uart.read()
+                if chunk:
+                    reply += chunk
+                    all_replies += chunk
+                    if expected in reply:
+                        print("%s motor %s configured" % (self.label, label))
+                        return True
+                time.sleep_ms(3)
+        print(
+            "WARNING,%s %s command sent, ACK not received,reply=%r"
+            % (self.label, label, all_replies)
+        )
+        return False
+
+    def configure_heavy_load_mode(self):
+        if self.runtime_configured:
+            return True
+        # The installed motors are confirmed Emm firmware over TTL. Force one
+        # deterministic packet format and explicitly disable 0.1RPM scaling,
+        # so a command value of 20 always means exactly 20RPM even without RX.
+        self.firmware = MOTOR_FIRMWARE_MODE
+        # The firmware type is user-confirmed.  Keep "verified" reserved for
+        # an actual UART reply; otherwise the host log can falsely imply that
+        # the motor link has been proven healthy.
+        self.option_flags = self.read_option_flags()
+        self.firmware_verified = self.option_flags is not None
+        scale_ok = self.configure_setting(
+            (
+                MOTOR_ADDRESS,
+                0x4F,
+                0x71,
+                0x00,
+                0x00,
+                0x6B,
+            ),
+            0x4F,
+            "integer RPM mode",
+        )
+        self.speed_scale = 1
+        self.speed_scale_verified = scale_ok
+        current_ma = int(MOTOR_CLOSED_LOOP_MAX_CURRENT_MA)
+        current_ok = self.configure_setting(
+            (
+                MOTOR_ADDRESS,
+                0x45,
+                0x66,
+                0x00,
+                (current_ma >> 8) & 0xFF,
+                current_ma & 0xFF,
+                0x6B,
+            ),
+            0x45,
+            "closed-loop current %dmA" % current_ma,
+        )
+        self.runtime_configured = True
+        return scale_ok and current_ok
+
+    def read_option_flags(self):
+        # Read commands return even when control-command acknowledgements are
+        # disabled. bit1 selects X/Emm firmware; bit7 is Emm 0.1RPM input.
+        for _ in range(3):
+            self.write((MOTOR_ADDRESS, 0x1A, 0x6B))
+            deadline = time.ticks_add(time.ticks_ms(), 120)
+            reply = b""
+            while time.ticks_diff(deadline, time.ticks_ms()) > 0:
+                chunk = self.uart.read()
+                if chunk:
+                    reply += chunk
+                    for index in range(max(0, len(reply) - 8), len(reply) - 3):
+                        if (
+                            reply[index] == MOTOR_ADDRESS
+                            and reply[index + 1] == 0x1A
+                            and reply[index + 3] == 0x6B
+                        ):
+                            return reply[index + 2]
+                time.sleep_ms(3)
+        return None
+
+    def read_reply(self, function_code, reply_length, timeout_ms=120):
+        for _ in range(3):
+            self.write((MOTOR_ADDRESS, function_code, 0x6B))
+            deadline = time.ticks_add(time.ticks_ms(), timeout_ms)
+            reply = b""
+            while time.ticks_diff(deadline, time.ticks_ms()) > 0:
+                chunk = self.uart.read()
+                if chunk:
+                    reply += chunk
+                    start_min = max(0, len(reply) - reply_length - 8)
+                    start_max = len(reply) - reply_length + 1
+                    for index in range(start_min, start_max):
+                        packet = reply[index:index + reply_length]
+                        if (
+                            len(packet) == reply_length
+                            and packet[0] == MOTOR_ADDRESS
+                            and packet[1] == function_code
+                            and packet[-1] == 0x6B
+                        ):
+                            return packet
+                time.sleep_ms(3)
+        return None
+
+    def read_status_flags(self):
+        reply = self.read_reply(0x3A, 4)
+        return None if reply is None else reply[2]
+
+    def read_phase_current_ma(self):
+        reply = self.read_reply(0x27, 5)
+        if reply is None:
+            return None
+        return (reply[2] << 8) | reply[3]
+
+    def read_realtime_speed_rpm(self):
+        reply = self.read_reply(0x35, 6)
+        if reply is None:
+            return None
+        magnitude = (reply[3] << 8) | reply[4]
+        if self.firmware == "X":
+            magnitude /= 10.0
+        return -magnitude if reply[2] else magnitude
+
+    def read_position_degrees(self):
+        reply = self.read_reply(0x36, 8)
+        if reply is None:
+            return None
+        raw = (
+            (reply[3] << 24)
+            | (reply[4] << 16)
+            | (reply[5] << 8)
+            | reply[6]
+        )
+        if self.firmware == "X":
+            degrees = raw / 10.0
+        else:
+            degrees = raw * 360.0 / 65536.0
+        return -degrees if reply[2] else degrees
+
+    def clear_protection(self):
+        ok = self.configure_setting(
+            (MOTOR_ADDRESS, 0x0E, 0x52, 0x6B),
+            0x0E,
+            "clear protection",
+        )
+        self.enable()
+        return ok
+
+    def enable_emm_turbo(self):
+        if self.firmware != "EMM" or self.turbo_enabled:
+            return self.turbo_enabled
+        ok = self.configure_setting(
+            (
+                MOTOR_ADDRESS,
+                0xD5,
+                0x69,
+                0x00,  # runtime only
+                0x02,  # Emm turbo firmware mode
+                0x6B,
+            ),
+            0xD5,
+            "Emm turbo",
+        )
+        if ok:
+            self.turbo_enabled = True
+            self.enable()
+        return ok
 
     def configure_heartbeat(self, timeout_ms=MOTOR_HEARTBEAT_TIMEOUT_MS):
         timeout_ms = int(timeout_ms)
@@ -262,8 +464,21 @@ class ZDTMotor:
         if self.last_speed == 0:
             return
         direction = self.last_direction if self.last_direction is not None else 0
-        self.write(
-            (
+        if self.firmware == "X":
+            acceleration = MOTOR_X_ACCELERATION_RPM_S
+            command = (
+                MOTOR_ADDRESS,
+                0xF6,
+                direction,
+                (acceleration >> 8) & 0xFF,
+                acceleration & 0xFF,
+                0x00,
+                0x00,
+                0x00,
+                0x6B,
+            )
+        else:
+            command = (
                 MOTOR_ADDRESS,
                 0xF6,
                 direction,
@@ -273,35 +488,48 @@ class ZDTMotor:
                 0x00,
                 0x6B,
             )
-        )
+        self.write(command)
         self.last_direction = None
         self.last_speed = 0
         self.last_command_ms = time.ticks_ms()
 
     def set_physical_speed(self, signed_rpm, maximum_rpm):
         signed_rpm = clamp(signed_rpm, -maximum_rpm, maximum_rpm)
-        magnitude = int(abs(signed_rpm) + 0.5)
+        magnitude = int(abs(signed_rpm) * self.speed_scale + 0.5)
         if magnitude <= 0:
             self.smooth_stop()
             return
 
-        signed_command = magnitude if signed_rpm > 0 else -magnitude
-        direction = 0 if signed_command > 0 else 1
+        direction = 0 if signed_rpm > 0 else 1
         now_ms = time.ticks_ms()
 
-        command = (
-            MOTOR_ADDRESS,
-            0xF6,
-            direction,
-            (magnitude >> 8) & 0xFF,
-            magnitude & 0xFF,
-            MOTOR_ACCELERATION,
-            0x00,
-            0x6B,
-        )
+        if self.firmware == "X":
+            acceleration = MOTOR_X_ACCELERATION_RPM_S
+            command = (
+                MOTOR_ADDRESS,
+                0xF6,
+                direction,
+                (acceleration >> 8) & 0xFF,
+                acceleration & 0xFF,
+                (magnitude >> 8) & 0xFF,
+                magnitude & 0xFF,
+                0x00,
+                0x6B,
+            )
+        else:
+            command = (
+                MOTOR_ADDRESS,
+                0xF6,
+                direction,
+                (magnitude >> 8) & 0xFF,
+                magnitude & 0xFF,
+                MOTOR_ACCELERATION,
+                0x00,
+                0x6B,
+            )
         self.write(command)
         self.last_direction = direction
-        self.last_speed = magnitude
+        self.last_speed = magnitude / float(self.speed_scale)
         self.last_command_ms = now_ms
 
     def keepalive(self):
@@ -811,6 +1039,24 @@ pid_test_step_amplitude = {
     "X": PID_MAX_STEP_PIXELS["X"],
     "Y": PID_MAX_STEP_PIXELS["Y"],
 }
+axis_plant = {
+    "X": {
+        "pixels_per_motor_degree": 0.0,
+        "pixels_per_second_per_rpm": 0.0,
+        "backlash_pixels": 0.0,
+        "tune_max_rpm": TUNE_MAX_RPM,
+        "recenter_max_rpm": RECENTER_MAX_RPM,
+        "track_max_rpm": X_TRACK_MAX_RPM,
+    },
+    "Y": {
+        "pixels_per_motor_degree": 0.0,
+        "pixels_per_second_per_rpm": 0.0,
+        "backlash_pixels": 0.0,
+        "tune_max_rpm": Y_TUNE_MAX_RPM,
+        "recenter_max_rpm": Y_RECENTER_MAX_RPM,
+        "track_max_rpm": Y_TRACK_MAX_RPM,
+    },
+}
 
 tracker = RectangleTracker()
 last_observation = None
@@ -830,6 +1076,9 @@ control_state = {
         "last_ms": None,
         "d": 0.0,
         "i": 0.0,
+        "last_error_sign": 0,
+        "centered_frames": 0,
+        "reversal_boost_frames": 0,
     },
     "Y": {
         "e": None,
@@ -837,6 +1086,9 @@ control_state = {
         "last_ms": None,
         "d": 0.0,
         "i": 0.0,
+        "last_error_sign": 0,
+        "centered_frames": 0,
+        "reversal_boost_frames": 0,
     },
 }
 
@@ -931,15 +1183,39 @@ def service_motor_keepalive():
 
 def all_motors_enable():
     if x_motor is not None:
+        x_motor.configure_heavy_load_mode()
+        wireless_send(
+            "MOTOR_CONFIG,X,FIRMWARE,%s,LINK,%s,FIRMWARE_VERIFIED,%d,SPEED_SCALE,%d,SCALE_VERIFIED,%d,CURRENT_REQUEST_MA,%d"
+            % (
+                x_motor.firmware,
+                MOTOR_LINK_MODE,
+                1 if x_motor.firmware_verified else 0,
+                x_motor.speed_scale,
+                1 if x_motor.speed_scale_verified else 0,
+                MOTOR_CLOSED_LOOP_MAX_CURRENT_MA,
+            )
+        )
         x_motor.configure_heartbeat()
     if y_motor is not None:
+        y_motor.configure_heavy_load_mode()
+        wireless_send(
+            "MOTOR_CONFIG,Y,FIRMWARE,%s,LINK,%s,FIRMWARE_VERIFIED,%d,SPEED_SCALE,%d,SCALE_VERIFIED,%d,CURRENT_REQUEST_MA,%d"
+            % (
+                y_motor.firmware,
+                MOTOR_LINK_MODE,
+                1 if y_motor.firmware_verified else 0,
+                y_motor.speed_scale,
+                1 if y_motor.speed_scale_verified else 0,
+                MOTOR_CLOSED_LOOP_MAX_CURRENT_MA,
+            )
+        )
         y_motor.configure_heartbeat()
-    # Enable only after both heartbeat configurations complete. This avoids
-    # the first motor timing out while the second motor waits for an ACK.
+    # Clear a previous run's stall/over-current latch even when status reads
+    # are unavailable, then enable after both heartbeat settings complete.
     if x_motor is not None:
-        x_motor.enable()
+        x_motor.clear_protection()
     if y_motor is not None:
-        y_motor.enable()
+        y_motor.clear_protection()
     all_motors_stop(True)
 
 
@@ -956,6 +1232,9 @@ def reset_controller(axis):
     control_state[axis]["last_ms"] = None
     control_state[axis]["d"] = 0.0
     control_state[axis]["i"] = 0.0
+    control_state[axis]["last_error_sign"] = 0
+    control_state[axis]["centered_frames"] = 0
+    control_state[axis]["reversal_boost_frames"] = 0
 
 
 def apply_follow_settings(
@@ -964,13 +1243,13 @@ def apply_follow_settings(
     integral_limit,
     large_i_scale,
 ):
-    follow_settings["ff_gain"] = clamp(ff_gain, 0.015, 0.070)
-    follow_settings["ff_max"] = clamp(ff_max, 2.0, 8.0)
+    follow_settings["ff_gain"] = clamp(ff_gain, 0.020, 0.090)
+    follow_settings["ff_max"] = clamp(ff_max, 3.0, 12.0)
     follow_settings["integral_limit"] = clamp(
-        integral_limit, 6.0, 18.0
+        integral_limit, 8.0, 22.0
     )
     follow_settings["large_i_scale"] = clamp(
-        large_i_scale, 0.08, 0.35
+        large_i_scale, 0.08, 0.40
     )
     reset_controller("X")
     reset_controller("Y")
@@ -1085,16 +1364,16 @@ def handle_command(command):
             if not (
                 0.01 <= x_kp <= 1.0
                 and 0.0 <= x_ki <= 1.0
-                and 0.0 <= x_kd <= 0.1
+                and 0.0 <= x_kd <= 0.15
                 and 0.01 <= y_kp <= 1.0
                 and 0.0 <= y_ki <= 1.0
-                and 0.0 <= y_kd <= 0.1
+                and 0.0 <= y_kd <= 0.15
                 and x_polarity in (-1, 1)
                 and y_polarity in (-1, 1)
-                and 0.015 <= ff_gain <= 0.070
-                and 2.0 <= ff_max <= 8.0
-                and 6.0 <= integral_limit <= 18.0
-                and 0.08 <= large_i_scale <= 0.35
+                and 0.020 <= ff_gain <= 0.090
+                and 3.0 <= ff_max <= 12.0
+                and 8.0 <= integral_limit <= 22.0
+                and 0.08 <= large_i_scale <= 0.40
             ):
                 raise ValueError("range")
         except Exception:
@@ -1337,15 +1616,86 @@ def axis_objects(axis):
 
 
 def axis_tune_max_rpm(axis):
-    return TUNE_MAX_RPM if axis == "X" else Y_TUNE_MAX_RPM
+    return axis_plant[axis]["tune_max_rpm"]
 
 
 def axis_recenter_max_rpm(axis):
-    return (
-        RECENTER_MAX_RPM
-        if axis == "X"
-        else Y_RECENTER_MAX_RPM
+    return axis_plant[axis]["recenter_max_rpm"]
+
+
+def axis_track_max_rpm(axis):
+    return axis_plant[axis]["track_max_rpm"]
+
+
+def update_axis_plant(axis, pixel_delta, motor_degree_delta):
+    motor_degree_delta = abs(float(motor_degree_delta))
+    if motor_degree_delta < 0.5:
+        return False
+    pixels_per_degree = abs(float(pixel_delta)) / motor_degree_delta
+    pixels_per_second_per_rpm = 6.0 * pixels_per_degree
+    if pixels_per_second_per_rpm < 0.20:
+        return False
+
+    # Convert desired image speeds to motor RPM using the measured effective
+    # transmission. This automatically includes gear ratio and camera FOV.
+    if axis == "X":
+        tune_ceiling = TUNE_MAX_RPM
+        recenter_ceiling = RECENTER_MAX_RPM
+        track_ceiling = X_TRACK_MAX_RPM
+        desired_tune_px_s = 125.0
+        desired_recenter_px_s = 95.0
+        desired_track_px_s = 190.0
+    else:
+        tune_ceiling = Y_TUNE_MAX_RPM
+        recenter_ceiling = Y_RECENTER_MAX_RPM
+        track_ceiling = Y_TRACK_MAX_RPM
+        desired_tune_px_s = 90.0
+        desired_recenter_px_s = 75.0
+        desired_track_px_s = 145.0
+
+    plant = axis_plant[axis]
+    plant["pixels_per_motor_degree"] = pixels_per_degree
+    plant["pixels_per_second_per_rpm"] = pixels_per_second_per_rpm
+    plant["tune_max_rpm"] = clamp(
+        desired_tune_px_s / pixels_per_second_per_rpm,
+        10.0,
+        tune_ceiling,
     )
+    plant["recenter_max_rpm"] = clamp(
+        desired_recenter_px_s / pixels_per_second_per_rpm,
+        8.0,
+        recenter_ceiling,
+    )
+    plant["track_max_rpm"] = clamp(
+        desired_track_px_s / pixels_per_second_per_rpm,
+        15.0,
+        track_ceiling,
+    )
+    wireless_send(
+        "TUNE,%s,PLANT,PX_PER_MOTOR_DEG,%.4f,PX_PER_S_PER_RPM,%.3f,TUNE_MAXRPM,%.1f,RECENTER_MAXRPM,%.1f,TRACK_MAXRPM,%.1f"
+        % (
+            axis,
+            pixels_per_degree,
+            pixels_per_second_per_rpm,
+            plant["tune_max_rpm"],
+            plant["recenter_max_rpm"],
+            plant["track_max_rpm"],
+        )
+    )
+    return True
+
+
+def reset_axis_plant_limits():
+    for axis in ("X", "Y"):
+        axis_plant[axis]["pixels_per_motor_degree"] = 0.0
+        axis_plant[axis]["pixels_per_second_per_rpm"] = 0.0
+        axis_plant[axis]["backlash_pixels"] = 0.0
+    axis_plant["X"]["tune_max_rpm"] = TUNE_MAX_RPM
+    axis_plant["X"]["recenter_max_rpm"] = RECENTER_MAX_RPM
+    axis_plant["X"]["track_max_rpm"] = X_TRACK_MAX_RPM
+    axis_plant["Y"]["tune_max_rpm"] = Y_TUNE_MAX_RPM
+    axis_plant["Y"]["recenter_max_rpm"] = Y_RECENTER_MAX_RPM
+    axis_plant["Y"]["track_max_rpm"] = Y_TRACK_MAX_RPM
 
 
 def calibrate_axis_polarity(axis):
@@ -1355,44 +1705,143 @@ def calibrate_axis_polarity(axis):
         if axis == "X"
         else Y_PROBE_DURATION_MS
     )
-    while True:
+    probe_levels = (
+        X_PROBE_RPM_LEVELS
+        if axis == "X"
+        else Y_PROBE_RPM_LEVELS
+    )
+    motor.clear_protection()
+    for probe_index, probe_rpm in enumerate(probe_levels):
         all_motors_stop(True)
         baseline = wait_and_observe(350)
         if baseline is None:
             baseline = wait_for_target("%s_CALIBRATION" % axis)
         baseline_error = baseline[error_key]
+        motor_position_before = motor.read_position_degrees()
 
-        wireless_send("TUNE,%s,CALIBRATE,PROBE" % axis)
-        last_effect_rpm[axis] = PROBE_RPM
-        motor.set_physical_speed(PROBE_RPM, TUNE_MAX_RPM)
+        wireless_send(
+            "TUNE,%s,CALIBRATE,PROBE,RPM,%d,FIRMWARE,%s"
+            % (axis, probe_rpm, motor.firmware)
+        )
+        last_effect_rpm[axis] = probe_rpm
+        motor.set_physical_speed(probe_rpm, axis_tune_max_rpm(axis))
         wait_and_observe(probe_duration_ms)
         motor.stop(True)
         last_effect_rpm[axis] = 0.0
+        motor_position_after = motor.read_position_degrees()
+        status_flags = motor.read_status_flags()
+        phase_current = motor.read_phase_current_ma()
 
         after_probe = wait_and_observe(350)
         if after_probe is None:
             after_probe = wait_for_target("%s_PROBE" % axis)
         delta = after_probe[error_key] - baseline_error
+        if (
+            motor_position_before is not None
+            and motor_position_after is not None
+        ):
+            motor_degree_source = "ENCODER"
+            motor_degree_delta = abs(
+                motor_position_after - motor_position_before
+            )
+        else:
+            motor_degree_source = "COMMAND_ESTIMATE"
+            motor_degree_delta = (
+                probe_rpm * 6.0 * probe_duration_ms / 1000.0
+            )
+        wireless_send(
+            "TUNE,%s,PROBE_RESULT,RPM,%d,PIX_DELTA,%d,MOTOR_DEG,%.2f,MOTOR_DEG_SOURCE,%s,STATUS,%s,CURRENT_MA,%s"
+            % (
+                axis,
+                probe_rpm,
+                delta,
+                motor_degree_delta,
+                motor_degree_source,
+                "NA" if status_flags is None else "%02X" % status_flags,
+                "NA" if phase_current is None else str(phase_current),
+            )
+        )
+
+        if status_flags is not None and (status_flags & 0x0C):
+            wireless_send(
+                "TUNE,%s,MOTOR_PROTECTION,STATUS,%02X,CLEARING"
+                % (axis, status_flags)
+            )
+            motor.clear_protection()
 
         # Always undo the probe before accepting or retrying it.
-        last_effect_rpm[axis] = -PROBE_RPM
-        motor.set_physical_speed(-PROBE_RPM, TUNE_MAX_RPM)
+        last_effect_rpm[axis] = -probe_rpm
+        motor.set_physical_speed(-probe_rpm, axis_tune_max_rpm(axis))
         wait_and_observe(probe_duration_ms)
         motor.stop(True)
         last_effect_rpm[axis] = 0.0
-        wait_and_observe(450)
+        undo_position = motor.read_position_degrees()
+        undo_observation = wait_and_observe(450)
+
+        reverse_pixel_delta = None
+        reverse_motor_degree_delta = None
+        if undo_observation is not None:
+            reverse_pixel_delta = (
+                undo_observation[error_key] - after_probe[error_key]
+            )
+            axis_plant[axis]["backlash_pixels"] = abs(
+                undo_observation[error_key] - baseline_error
+            )
+        if (
+            undo_position is not None
+            and motor_position_after is not None
+        ):
+            reverse_motor_degree_delta = abs(
+                undo_position - motor_position_after
+            )
 
         if abs(delta) < PROBE_MIN_PIXEL_CHANGE:
+            if probe_index == 0:
+                motor.clear_protection()
+                wireless_send(
+                    "TUNE,%s,CALIBRATE_RECOVERY,CLEAR_PROTECTION"
+                    % axis
+                )
+            elif probe_index == 1:
+                if motor.firmware == "EMM":
+                    turbo_ok = motor.enable_emm_turbo()
+                    wireless_send(
+                        "TUNE,%s,CALIBRATE_RECOVERY,EMM_TURBO,%d"
+                        % (axis, 1 if turbo_ok else 0)
+                    )
             wireless_send(
-                "TUNE,%s,CALIBRATE_RETRY,DELTA,%d" % (axis, delta)
+                "TUNE,%s,CALIBRATE_RETRY,DELTA,%d,NEXT_RPM"
+                % (axis, delta)
             )
             continue
 
-        # +physical means Emm direction 0. Record its effect on image error.
+        # +physical means protocol direction 0. Record its image effect.
+        motor.protocol_motion_verified = True
         axis_polarity[axis] = 1 if delta > 0 else -1
-        probe_degrees = (
-            PROBE_RPM * 6.0 * probe_duration_ms / 1000.0
+        combined_pixel_delta = abs(delta)
+        combined_motor_degree_delta = motor_degree_delta
+        if (
+            reverse_pixel_delta is not None
+            and reverse_motor_degree_delta is not None
+            and reverse_motor_degree_delta >= 0.5
+        ):
+            combined_pixel_delta += abs(reverse_pixel_delta)
+            combined_motor_degree_delta += reverse_motor_degree_delta
+        update_axis_plant(
+            axis,
+            combined_pixel_delta,
+            combined_motor_degree_delta,
         )
+        wireless_send(
+            "TUNE,%s,GEAR,BACKLASH_PX,%.1f,FORWARD_PX,%d,REVERSE_PX,%s"
+            % (
+                axis,
+                axis_plant[axis]["backlash_pixels"],
+                delta,
+                "NA" if reverse_pixel_delta is None else str(reverse_pixel_delta),
+            )
+        )
+        probe_degrees = max(0.1, motor_degree_delta)
         pixels_per_degree = abs(delta) / probe_degrees
         kick_degrees = clamp(
             KICK_TARGET_PIXELS / max(0.1, pixels_per_degree),
@@ -1404,6 +1853,13 @@ def calibrate_axis_polarity(axis):
             % (axis, axis_polarity[axis], delta, kick_degrees)
         )
         return
+
+    motor.stop(True)
+    wireless_send(
+        "TUNE,%s,CALIBRATE_FAILED,NO_MOTION,FIRMWARE,%s"
+        % (axis, motor.firmware)
+    )
+    raise TuneAbort("%s_MOTOR_NO_MOTION" % axis)
 
 
 def command_axis_effect_speed(axis, effect_rpm, maximum_rpm):
@@ -1465,6 +1921,23 @@ def controller_output(
     state["d"] = 0.75 * state["d"] + 0.25 * derivative
     state["last_n"] = filtered_error
     state["last_ms"] = now_ms
+
+    error_sign = (
+        1 if filtered_error > DEADBAND_PIXELS
+        else (-1 if filtered_error < -DEADBAND_PIXELS else 0)
+    )
+    if (
+        error_sign
+        and state["last_error_sign"]
+        and error_sign != state["last_error_sign"]
+    ):
+        # A genuine centre crossing or target reversal makes the retained
+        # following drive stale. Release it quickly to avoid geared backlash
+        # producing a second overshoot in the opposite direction.
+        state["i"] *= 0.35
+        state["reversal_boost_frames"] = GEAR_REVERSAL_BOOST_FRAMES
+    if error_sign:
+        state["last_error_sign"] = error_sign
 
     area = max(1.0, float(observation["area"]))
     distance_gain = clamp(
@@ -1531,8 +2004,30 @@ def controller_output(
                 -ff_max,
                 ff_max,
             )
+
+        if (
+            abs(filtered_error) <= DEADBAND_PIXELS
+            and abs(state["d"])
+            <= CENTER_SETTLE_DERIVATIVE_PX_PER_SECOND
+        ):
+            state["centered_frames"] += 1
+            if (
+                state["centered_frames"] >= CENTER_SETTLE_FRAMES
+                and abs(state["i"]) <= CENTER_RESIDUAL_DRIVE_RPM
+            ):
+                # Clear only a small residual drive. A larger learned drive
+                # is preserved so a slowly moving target remains centred.
+                state["i"] *= 0.55
+                if abs(state["i"]) < 0.15:
+                    state["i"] = 0.0
+                integral_drive = state["i"]
+                if abs(velocity_feedforward) < 0.5:
+                    velocity_feedforward = 0.0
+        else:
+            state["centered_frames"] = 0
     else:
         state["i"] = 0.0
+        state["centered_frames"] = 0
 
     p_term = kp * filtered_error
     d_limit = max(0.5, abs(p_term) * MAX_D_TO_P_RATIO)
@@ -1567,6 +2062,28 @@ def controller_output(
             -MIN_ACTIVE_RPM if filtered_error > 0
             else MIN_ACTIVE_RPM
         )
+
+    if state["reversal_boost_frames"] > 0:
+        if (
+            abs(filtered_error) >= MIN_ACTIVE_ERROR_PIXELS
+            and abs(disturbance_rpm) < 0.1
+        ):
+            image_gain = max(
+                0.2,
+                axis_plant[axis]["pixels_per_second_per_rpm"],
+            )
+            backlash_pixels = axis_plant[axis]["backlash_pixels"]
+            reversal_rpm = clamp(
+                backlash_pixels / (image_gain * 0.12),
+                MIN_ACTIVE_RPM,
+                GEAR_REVERSAL_MAX_RPM,
+            )
+            correction_sign = -1.0 if filtered_error > 0 else 1.0
+            if abs(effect_rpm) < reversal_rpm:
+                effect_rpm = correction_sign * reversal_rpm
+            state["reversal_boost_frames"] -= 1
+        else:
+            state["reversal_boost_frames"] = 0
     return effect_rpm, raw_error_pixels
 
 
@@ -1574,11 +2091,34 @@ def recover_axis(axis, timeout_ms=RECENTER_TIMEOUT_MS):
     wireless_send("TUNE,%s,RECENTER" % axis)
     reset_controller(axis)
     stable = 0
+    retries = 0
     deadline = time.ticks_add(time.ticks_ms(), timeout_ms)
     while True:
         if time.ticks_diff(deadline, time.ticks_ms()) <= 0:
-            axis_objects(axis)[0].stop(True)
-            wireless_send("TUNE,%s,RECENTER_RETRY" % axis)
+            motor = axis_objects(axis)[0]
+            status_flags = motor.read_status_flags()
+            phase_current = motor.read_phase_current_ma()
+            motor.stop(True)
+            retries += 1
+            wireless_send(
+                "TUNE,%s,RECENTER_RETRY,COUNT,%d,STATUS,%s,CURRENT_MA,%s"
+                % (
+                    axis,
+                    retries,
+                    "NA" if status_flags is None else "%02X" % status_flags,
+                    "NA" if phase_current is None else str(phase_current),
+                )
+            )
+            if status_flags is not None and (status_flags & 0x0C):
+                motor.clear_protection()
+            turbo_ok = motor.enable_emm_turbo()
+            if motor.firmware == "EMM":
+                wireless_send(
+                    "TUNE,%s,MOTOR_TORQUE_ESCALATION,EMM_TURBO,%d"
+                    % (axis, 1 if turbo_ok else 0)
+                )
+            if retries >= 2:
+                raise TuneAbort("%s_RECENTER_FAILED" % axis)
             reset_controller(axis)
             stable = 0
             deadline = time.ticks_add(time.ticks_ms(), timeout_ms)
@@ -1593,7 +2133,7 @@ def recover_axis(axis, timeout_ms=RECENTER_TIMEOUT_MS):
             continue
 
         effect, error = controller_output(
-            axis, observation, 0.20, 0.012, 0.0
+            axis, observation, 0.34, 0.014, 0.0
         )
         command_axis_effect_speed(
             axis,
@@ -1638,10 +2178,10 @@ def recover_both_axes(timeout_ms=RECENTER_TIMEOUT_MS):
             continue
 
         x_effect, x_error = controller_output(
-            "X", observation, 0.20, 0.012, 0.0
+            "X", observation, 0.34, 0.014, 0.0
         )
         y_effect, y_error = controller_output(
-            "Y", observation, 0.20, 0.012, 0.0
+            "Y", observation, 0.34, 0.014, 0.0
         )
         command_axis_effect_speed(
             "X", x_effect, axis_recenter_max_rpm("X")
@@ -1705,59 +2245,54 @@ def target_axis_edge_clearance(axis, observation):
 
 
 def pid_reference_offset(elapsed_ms, step_amplitude=60.0):
-    # Large steps verify fast recentering. The slow ramps emulate gentle
-    # following, and the later short ramps test faster one-direction motion.
-    # After every ramp, return to zero with a short continuous ramp instead
-    # of teleporting the virtual target back to center. That keeps the test
-    # useful without creating an artificial motor snap.
-    # The amplitude is reduced from the centered rectangle's actual border
-    # clearance so the whole target remains visible, especially on the
-    # shorter Y image axis.
+    # Geared V13 profile: a sudden target stays in its new position long
+    # enough for acceleration, braking and settling. Slow ramps run in both
+    # directions to expose backlash; the final fast ramp tests catch-up.
     slow_ramp_amplitude = 0.70 * step_amplitude
     fast_ramp_amplitude = 0.80 * step_amplitude
-    if elapsed_ms < 250:
+    if elapsed_ms < 200:
         return 0.0
-    if elapsed_ms < 550:
+    if elapsed_ms < 800:
         return step_amplitude
-    if elapsed_ms < 850:
+    if elapsed_ms < 1100:
         return (
             step_amplitude
-            * (1.0 - (elapsed_ms - 550) / 300.0)
+            * (1.0 - (elapsed_ms - 800) / 300.0)
         )
-    if elapsed_ms < 1150:
+    if elapsed_ms < 1300:
         return 0.0
-    if elapsed_ms < 1450:
+    if elapsed_ms < 1900:
         return -step_amplitude
-    if elapsed_ms < 1750:
+    if elapsed_ms < 2200:
         return (
             -step_amplitude
-            * (1.0 - (elapsed_ms - 1450) / 300.0)
+            * (1.0 - (elapsed_ms - 1900) / 300.0)
         )
-    if elapsed_ms < 1900:
+    if elapsed_ms < 2350:
         return 0.0
-    if elapsed_ms < 3100:
+    if elapsed_ms < 3350:
         return (
             slow_ramp_amplitude
-            * (elapsed_ms - 1900)
-            / 1200.0
+            * (elapsed_ms - 2350)
+            / 1000.0
         )
-    if elapsed_ms < 3400:
+    if elapsed_ms < 3650:
         return (
             slow_ramp_amplitude
-            * (1.0 - (elapsed_ms - 3100) / 300.0)
+            * (1.0 - (elapsed_ms - 3350) / 300.0)
         )
-    if elapsed_ms < 3500:
+    if elapsed_ms < 3750:
         return 0.0
-    if elapsed_ms < 4700:
+    if elapsed_ms < 4750:
         return (
             -slow_ramp_amplitude
-            * (elapsed_ms - 3500)
-            / 1200.0
+            * (elapsed_ms - 3750)
+            / 1000.0
         )
-    if elapsed_ms < 5000:
+    if elapsed_ms < 5050:
         return (
             -slow_ramp_amplitude
-            * (1.0 - (elapsed_ms - 4700) / 300.0)
+            * (1.0 - (elapsed_ms - 4750) / 300.0)
         )
     if elapsed_ms < 5150:
         return 0.0
@@ -1771,19 +2306,6 @@ def pid_reference_offset(elapsed_ms, step_amplitude=60.0):
         return (
             fast_ramp_amplitude
             * (1.0 - (elapsed_ms - 5750) / 300.0)
-        )
-    if elapsed_ms < 6150:
-        return 0.0
-    if elapsed_ms < 6750:
-        return (
-            -fast_ramp_amplitude
-            * (elapsed_ms - 6150)
-            / 600.0
-        )
-    if elapsed_ms < 7050:
-        return (
-            -fast_ramp_amplitude
-            * (1.0 - (elapsed_ms - 6750) / 300.0)
         )
     return 0.0
 
@@ -1800,8 +2322,8 @@ def score_pid_samples(samples, step_amplitude=60.0):
         abs(sample[1])
         for sample in samples
         if (
-            250 <= sample[0] < 550
-            or 1150 <= sample[0] < 1450
+            200 <= sample[0] < 800
+            or 1300 <= sample[0] < 1900
         )
     ]
     large_step_mean = (
@@ -1812,8 +2334,8 @@ def score_pid_samples(samples, step_amplitude=60.0):
         abs(sample[1])
         for sample in samples
         if (
-            450 <= sample[0] < 550
-            or 1350 <= sample[0] < 1450
+            600 <= sample[0] < 800
+            or 1700 <= sample[0] < 1900
         )
     ]
     large_step_tail_mean = (
@@ -1824,8 +2346,8 @@ def score_pid_samples(samples, step_amplitude=60.0):
         abs(sample[1])
         for sample in samples
         if (
-            1900 <= sample[0] < 3100
-            or 3500 <= sample[0] < 4700
+            2350 <= sample[0] < 3350
+            or 3750 <= sample[0] < 4750
         )
     ]
     moving_mean = (
@@ -1835,8 +2357,8 @@ def score_pid_samples(samples, step_amplitude=60.0):
         abs(sample[1])
         for sample in samples
         if (
-            2800 <= sample[0] < 3100
-            or 4400 <= sample[0] < 4700
+            3050 <= sample[0] < 3350
+            or 4450 <= sample[0] < 4750
         )
     ]
     sustained_tail_mean = (
@@ -1848,7 +2370,6 @@ def score_pid_samples(samples, step_amplitude=60.0):
         for sample in samples
         if (
             5150 <= sample[0] < 5750
-            or 6150 <= sample[0] < 6750
         )
     ]
     fast_moving_mean = (
@@ -1860,7 +2381,6 @@ def score_pid_samples(samples, step_amplitude=60.0):
         for sample in samples
         if (
             5500 <= sample[0] < 5750
-            or 6500 <= sample[0] < 6750
         )
     ]
     fast_tail_mean = (
@@ -1880,26 +2400,23 @@ def score_pid_samples(samples, step_amplitude=60.0):
         error = sample[1]
         lag = None
         fast_lag = None
-        if 1900 <= elapsed < 3100:
+        if 2350 <= elapsed < 3350:
             lag = max(0.0, -error)
-        elif 3500 <= elapsed < 4700:
+        elif 3750 <= elapsed < 4750:
             lag = max(0.0, error)
         elif 5150 <= elapsed < 5750:
             fast_lag = max(0.0, -error)
-        elif 6150 <= elapsed < 6750:
-            fast_lag = max(0.0, error)
         if lag is not None:
             directional_lag.append(lag)
             if (
-                2800 <= elapsed < 3100
-                or 4400 <= elapsed < 4700
+                3050 <= elapsed < 3350
+                or 4450 <= elapsed < 4750
             ):
                 directional_tail_lag.append(lag)
         if fast_lag is not None:
             fast_directional_lag.append(fast_lag)
             if (
                 5500 <= elapsed < 5750
-                or 6500 <= elapsed < 6750
             ):
                 fast_directional_tail_lag.append(fast_lag)
     directional_lag_mean = (
@@ -1922,7 +2439,7 @@ def score_pid_samples(samples, step_amplitude=60.0):
     tail = [
         abs(sample[1])
         for sample in samples
-        if sample[0] >= 7050
+        if sample[0] >= 6050
     ]
     tail_mean = sum(tail) / len(tail) if tail else 100.0
 
@@ -1972,12 +2489,11 @@ def score_pid_samples(samples, step_amplitude=60.0):
         abs(sample[2])
         for sample in samples
         if (
-            850 <= sample[0] < 1150
-            or 1750 <= sample[0] < 1900
-            or 3400 <= sample[0] < 3500
-            or 5000 <= sample[0] < 5150
-            or 6050 <= sample[0] < 6150
-            or sample[0] >= 7050
+            1100 <= sample[0] < 1300
+            or 2200 <= sample[0] < 2350
+            or 3650 <= sample[0] < 3750
+            or 5050 <= sample[0] < 5150
+            or sample[0] >= 6050
         )
     ]
     quiet_command_mean = (
@@ -1987,7 +2503,7 @@ def score_pid_samples(samples, step_amplitude=60.0):
     tail_commands = [
         abs(sample[2])
         for sample in samples
-        if sample[0] >= 7050
+        if sample[0] >= 6050
     ]
     tail_command_mean = (
         sum(tail_commands) / len(tail_commands)
@@ -2046,6 +2562,9 @@ def evaluate_pid_candidate(axis, kp, ki, kd, mode="PID"):
     last_elapsed = None
     saturated_ms = 0
     runaway_ms = 0
+    no_motion_ms = 0
+    motion_anchor_error = None
+    previous_effect = 0.0
     saturation_error_limit = max(
         18.0,
         PID_SATURATION_ERROR_RATIO * step_amplitude,
@@ -2128,6 +2647,54 @@ def evaluate_pid_candidate(axis, kp, ki, kd, mode="PID"):
         finally:
             observation[error_key] = actual_error
 
+        if abs(previous_effect) >= MOTOR_NO_MOTION_MIN_RPM:
+            if motion_anchor_error is None:
+                motion_anchor_error = actual_error
+                no_motion_ms = 0
+            elif (
+                abs(actual_error - motion_anchor_error)
+                <= MOTOR_NO_MOTION_PIXEL_DELTA
+            ):
+                no_motion_ms += sample_dt_ms
+            else:
+                motion_anchor_error = actual_error
+                no_motion_ms = 0
+        else:
+            motion_anchor_error = actual_error
+            no_motion_ms = 0
+
+        if no_motion_ms >= MOTOR_NO_MOTION_ABORT_MS:
+            status_flags = motor.read_status_flags()
+            actual_speed = motor.read_realtime_speed_rpm()
+            phase_current = motor.read_phase_current_ma()
+            motor.stop(True)
+            wireless_send(
+                "TUNE,%s,MOTOR_STALL,CMD_RPM,%.1f,ACTUAL_RPM,%s,STATUS,%s,CURRENT_MA,%s"
+                % (
+                    axis,
+                    previous_effect,
+                    "NA" if actual_speed is None else "%.1f" % actual_speed,
+                    "NA" if status_flags is None else "%02X" % status_flags,
+                    "NA" if phase_current is None else str(phase_current),
+                )
+            )
+            if status_flags is not None and (status_flags & 0x0C):
+                motor.clear_protection()
+            turbo_ok = motor.enable_emm_turbo()
+            if motor.firmware == "EMM":
+                wireless_send(
+                    "TUNE,%s,MOTOR_TORQUE_ESCALATION,EMM_TURBO,%d"
+                    % (axis, 1 if turbo_ok else 0)
+                )
+            score = 625000.0
+            wireless_send(
+                "TUNE,%s,RESULT,MODE,%s,KP,%.3f,KI,%.3f,KD,%.3f,SCORE,%.3f,FAIL,MOTOR_STALL"
+                % (axis, mode, kp, ki, kd, score)
+            )
+            samples = None
+            gc.collect()
+            return score
+
         if elapsed > PID_EARLY_ABORT_GRACE_MS:
             if (
                 abs(effect) >= 0.94 * tune_max_rpm
@@ -2157,6 +2724,7 @@ def evaluate_pid_candidate(axis, kp, ki, kd, mode="PID"):
                 return score
 
         command_axis_effect_speed(axis, effect, tune_max_rpm)
+        previous_effect = clamp(effect, -tune_max_rpm, tune_max_rpm)
         samples.append(
             (
                 elapsed,
@@ -2194,12 +2762,12 @@ def pid_candidate_rank(candidate):
 
 
 def add_pid_candidate(candidates, kp, ki, kd):
-    kp = round(clamp(kp, 0.08, 0.40), 4)
+    kp = round(clamp(kp, 0.08, 0.90), 4)
     ki = round(
-        clamp(ki, MIN_SUSTAINED_TRACK_KI, 0.70),
+        clamp(ki, MIN_SUSTAINED_TRACK_KI, 0.85),
         4,
     )
-    kd = round(clamp(kd, 0.0, 0.020), 4)
+    kd = round(clamp(kd, 0.0, 0.120), 4)
     for candidate in candidates:
         if (
             abs(candidate["kp"] - kp) < PID_PARAMETER_EPSILON
@@ -2356,10 +2924,10 @@ def add_follow_candidate(
     integral_limit,
     large_i_scale,
 ):
-    ff_gain = round(clamp(ff_gain, 0.015, 0.070), 4)
-    ff_max = round(clamp(ff_max, 2.0, 8.0), 3)
-    integral_limit = round(clamp(integral_limit, 6.0, 18.0), 3)
-    large_i_scale = round(clamp(large_i_scale, 0.08, 0.35), 4)
+    ff_gain = round(clamp(ff_gain, 0.020, 0.090), 4)
+    ff_max = round(clamp(ff_max, 3.0, 12.0), 3)
+    integral_limit = round(clamp(integral_limit, 8.0, 22.0), 3)
+    large_i_scale = round(clamp(large_i_scale, 0.08, 0.40), 4)
     for candidate in candidates:
         if (
             abs(candidate["ff_gain"] - ff_gain)
@@ -2387,14 +2955,10 @@ def add_follow_candidate(
 def add_follow_polish_candidates(candidates, seed):
     start_count = len(candidates)
     offsets = (
-        (-0.002, 0.0, 0.0, 0.00),
-        (0.002, 0.0, 0.0, 0.00),
-        (-0.001, 0.0, 0.0, 0.00),
-        (0.001, 0.0, 0.0, 0.00),
-        (0.000, -0.5, 0.0, 0.00),
-        (0.000, 0.5, 0.0, 0.00),
-        (0.000, 0.0, -1.0, 0.00),
-        (0.000, 0.0, 1.0, 0.00),
+        (-0.005, 0.0, 0.0, 0.00),
+        (0.005, 0.0, 0.0, 0.00),
+        (0.000, -1.0, 0.0, 0.00),
+        (0.000, 1.0, 0.0, 0.00),
     )
     for offset in offsets:
         add_follow_candidate(
@@ -2495,7 +3059,7 @@ def tune_follow_profile():
     polish_pool = sorted(
         [champion] + polish_entries,
         key=lambda item: item["rank"],
-    )[:3]
+    )[:2]
     wireless_send(
         "TUNE,FOLLOW,POLISH_FINAL,COUNT,%d,REPEATS,%d"
         % (len(polish_pool), FOLLOW_POLISH_REPEAT_COUNT)
@@ -2552,9 +3116,9 @@ def tune_axis(axis):
 
     incumbent_candidate = None
     if (
-        0.08 <= incumbent_kp <= 0.40
-        and MIN_SUSTAINED_TRACK_KI <= incumbent_ki <= 0.70
-        and 0.0 <= incumbent_kd <= 0.020
+        0.08 <= incumbent_kp <= 0.90
+        and MIN_SUSTAINED_TRACK_KI <= incumbent_ki <= 0.85
+        and 0.0 <= incumbent_kd <= 0.120
     ):
         incumbent_candidate = add_pid_candidate(
             candidates,
@@ -2570,17 +3134,11 @@ def tune_axis(axis):
     for candidate in candidates:
         evaluate_pid_entry(axis, candidate)
 
+    # Successive-halving search. Only the best diverse candidates advance;
+    # weak candidates no longer consume several repeated 5.9 s tests.
     quarterfinalists = select_diverse_pid_candidates(
-        candidates, 8, 0.03, 0.07, 0.003
+        candidates, 4, 0.08, 0.12, 0.004
     )
-    if incumbent_candidate is not None:
-        incumbent_selected = False
-        for candidate in quarterfinalists:
-            if candidate is incumbent_candidate:
-                incumbent_selected = True
-                break
-        if not incumbent_selected:
-            quarterfinalists.append(incumbent_candidate)
     wireless_send(
         "TUNE,%s,CHAMPIONSHIP_QUARTERFINAL,COUNT,%d"
         % (axis, len(quarterfinalists))
@@ -2588,7 +3146,7 @@ def tune_axis(axis):
     ensure_pid_repeats(axis, quarterfinalists, 2)
 
     local_seeds = select_diverse_pid_candidates(
-        quarterfinalists, 3, 0.03, 0.07, 0.003
+        quarterfinalists, 2, 0.06, 0.10, 0.003
     )
     local_entries = []
     for seed in local_seeds:
@@ -2596,9 +3154,9 @@ def tune_axis(axis):
             add_pid_neighborhood(
                 candidates,
                 seed,
-                0.04,
-                0.08,
-                0.004,
+                0.11,
+                0.14,
+                0.020,
             )
         )
     wireless_send(
@@ -2610,7 +3168,7 @@ def tune_axis(axis):
 
     semifinal_pool = quarterfinalists + local_entries
     semifinalists = select_diverse_pid_candidates(
-        semifinal_pool, 6, 0.02, 0.05, 0.002
+        semifinal_pool, 4, 0.04, 0.08, 0.002
     )
     wireless_send(
         "TUNE,%s,CHAMPIONSHIP_SEMIFINAL,COUNT,%d"
@@ -2619,7 +3177,7 @@ def tune_axis(axis):
     ensure_pid_repeats(axis, semifinalists, 2)
 
     fine_seeds = select_diverse_pid_candidates(
-        semifinalists, 2, 0.015, 0.035, 0.001
+        semifinalists, 1, 0.02, 0.04, 0.001
     )
     fine_entries = []
     for seed in fine_seeds:
@@ -2627,9 +3185,9 @@ def tune_axis(axis):
             add_pid_neighborhood(
                 candidates,
                 seed,
-                0.015,
-                0.035,
-                0.0015,
+                0.04,
+                0.06,
+                0.008,
             )
         )
     wireless_send(
@@ -2641,38 +3199,15 @@ def tune_axis(axis):
 
     final_pool = semifinalists + fine_entries
     finalists = select_diverse_pid_candidates(
-        final_pool, 4, 0.01, 0.02, 0.001
+        final_pool, 3, 0.02, 0.04, 0.001
     )
     wireless_send(
-        "TUNE,%s,CHAMPIONSHIP_FINAL,COUNT,%d,REPEATS,3"
+        "TUNE,%s,CHAMPIONSHIP_FINAL,COUNT,%d,REPEATS,2"
         % (axis, len(finalists))
     )
-    ensure_pid_repeats(axis, finalists, 3)
+    ensure_pid_repeats(axis, finalists, 2)
     finalists.sort(key=lambda item: item["rank"])
     champion = finalists[0]
-
-    polish_entries = add_pid_polish_candidates(candidates, champion)
-    wireless_send(
-        "TUNE,%s,CHAMPIONSHIP_POLISH,COUNT,%d"
-        % (axis, len(polish_entries))
-    )
-    for candidate in polish_entries:
-        evaluate_pid_entry(axis, candidate)
-
-    polish_pool = select_diverse_pid_candidates(
-        [champion] + polish_entries,
-        4,
-        0.004,
-        0.012,
-        0.0004,
-    )
-    wireless_send(
-        "TUNE,%s,CHAMPIONSHIP_POLISH_FINAL,COUNT,%d,REPEATS,%d"
-        % (axis, len(polish_pool), PID_POLISH_REPEAT_COUNT)
-    )
-    ensure_pid_repeats(axis, polish_pool, PID_POLISH_REPEAT_COUNT)
-    polish_pool.sort(key=lambda item: item["rank"])
-    champion = polish_pool[0]
 
     best_kp = champion["kp"]
     best_ki = champion["ki"]
@@ -2710,6 +3245,16 @@ def run_autotune():
     abort_requested = False
     all_motors_enable()
     all_motors_stop(True)
+    reset_axis_plant_limits()
+    # Do not let an older gimbal champion's conservative follow limits bias
+    # every V16 PID candidate. Start from the geared baseline; FOLLOW tuning
+    # will optimize these values after both axis PID gains are selected.
+    apply_follow_settings(
+        DEFAULT_TRACK_VELOCITY_FF_GAIN,
+        DEFAULT_MAX_TRACK_VELOCITY_FF_RPM,
+        DEFAULT_MAX_TRACK_INTEGRAL_RPM,
+        DEFAULT_TRACK_LARGE_ERROR_INTEGRAL_SCALE,
+    )
 
     try:
         wireless_send(
@@ -2806,7 +3351,7 @@ def tracking_step(observation):
                 -DETECTION_HOLD_MAX_RPM,
                 DETECTION_HOLD_MAX_RPM,
             ),
-            TRACK_MAX_RPM,
+            axis_track_max_rpm("X"),
         )
         command_axis_effect_speed(
             "Y",
@@ -2815,7 +3360,7 @@ def tracking_step(observation):
                 -DETECTION_HOLD_MAX_RPM,
                 DETECTION_HOLD_MAX_RPM,
             ),
-            TRACK_MAX_RPM,
+            axis_track_max_rpm("Y"),
         )
         return
 
@@ -2835,8 +3380,12 @@ def tracking_step(observation):
         follow_target_motion=True,
         ki=gains["Y"]["ki"],
     )
-    command_axis_effect_speed("X", x_effect, TRACK_MAX_RPM)
-    command_axis_effect_speed("Y", y_effect, TRACK_MAX_RPM)
+    command_axis_effect_speed(
+        "X", x_effect, axis_track_max_rpm("X")
+    )
+    command_axis_effect_speed(
+        "Y", y_effect, axis_track_max_rpm("Y")
+    )
 
     if (
         abs(observation["ex"]) <= DEADBAND_PIXELS
@@ -2849,6 +3398,8 @@ def tracking_step(observation):
         tracking_centered_frames += 1
         if tracking_centered_frames >= 30:
             ensure_motors_stopped()
+            reset_controller("X")
+            reset_controller("Y")
             tracking_centered_frames = 0
     else:
         tracking_centered_frames = 0
