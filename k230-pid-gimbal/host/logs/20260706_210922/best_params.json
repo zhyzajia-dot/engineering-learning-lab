@@ -1,0 +1,15 @@
+{
+  "XKP": 0.16,
+  "XKI": 0.0,
+  "XKD": 0.009,
+  "XPOL": 1.0,
+  "XSCORE": 110.237,
+  "YKP": 0.09,
+  "YKI": 0.18,
+  "YKD": 0.003,
+  "YPOL": 1.0,
+  "YSCORE": 80.88,
+  "PROFILE": "GIMBAL_PID_V8",
+  "SCORE_PROFILE": "PID_SUSTAINED_FOLLOW_V3",
+  "MEDIAN_AREA": 31120.0
+}

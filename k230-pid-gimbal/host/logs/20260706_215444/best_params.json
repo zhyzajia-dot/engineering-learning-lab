@@ -1,0 +1,15 @@
+{
+  "XKP": 0.1,
+  "XKI": 0.255,
+  "XKD": 0.007,
+  "XPOL": 1.0,
+  "XSCORE": 163.456,
+  "YKP": 0.085,
+  "YKI": 0.08,
+  "YKD": 0.003,
+  "YPOL": 1.0,
+  "YSCORE": 94.528,
+  "PROFILE": "GIMBAL_PID_V8",
+  "SCORE_PROFILE": "PID_CHAMPIONSHIP_SAFE_V6",
+  "MEDIAN_AREA": 28185.0
+}

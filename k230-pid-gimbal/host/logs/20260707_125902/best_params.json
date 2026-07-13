@@ -1,0 +1,20 @@
+{
+  "XKP": 0.16,
+  "XKI": 0.435,
+  "XKD": 0.003,
+  "XPOL": 1.0,
+  "XSCORE": 329.085,
+  "YKP": 0.1,
+  "YKI": 0.24,
+  "YKD": 0.003,
+  "YPOL": 1.0,
+  "YSCORE": 161.121,
+  "FFG": 0.034,
+  "FFMAX": 4.5,
+  "ILIM": 12.0,
+  "LISCALE": 0.18,
+  "FSCORE": 519.153,
+  "PROFILE": "GIMBAL_PID_V9C",
+  "SCORE_PROFILE": "PID_FAST_FOLLOW_CLEAN_V8",
+  "MEDIAN_AREA": 25386.0
+}
