@@ -39,3 +39,9 @@ logs/
 !k230-pid-gimbal/host/logs/
 !k230-pid-gimbal/host/logs/**
 !k230-pid-gimbal/host/logs/**/*.log
+
+# Keep MSPM0 PID host-tuning logs visible in VS Code.
+!mspm0-pid-car/pid-lab/HOST/
+!mspm0-pid-car/pid-lab/HOST/logs/
+!mspm0-pid-car/pid-lab/HOST/logs/**
+!mspm0-pid-car/pid-lab/HOST/logs/**/*.log

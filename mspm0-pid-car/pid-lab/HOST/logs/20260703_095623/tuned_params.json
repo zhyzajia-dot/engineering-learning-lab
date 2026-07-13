@@ -1,0 +1,18 @@
+{
+  "L": {
+    "min_pwm": 27,
+    "ff_x1000": 480,
+    "kp_x1000": 800,
+    "ki_x1000": 500,
+    "validation_score": 0.58784,
+    "validation_samples": 149
+  },
+  "R": {
+    "min_pwm": 29,
+    "ff_x1000": 453,
+    "kp_x1000": 350,
+    "ki_x1000": 350,
+    "validation_score": 0.52967,
+    "validation_samples": 149
+  }
+}

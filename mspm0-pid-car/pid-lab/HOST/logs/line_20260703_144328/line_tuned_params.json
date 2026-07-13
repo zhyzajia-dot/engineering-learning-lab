@@ -1,0 +1,13 @@
+{
+  "line_kp_x1000": 9750,
+  "line_kd_x1000": 3000,
+  "validation_score": 1.29152,
+  "validation_samples": 450,
+  "validation_scores": [
+    2.13666,
+    1.29152,
+    1.05313
+  ],
+  "search": "coarse + 2x local + joint neighborhood",
+  "score_version": 2
+}
