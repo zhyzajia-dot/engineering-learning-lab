@@ -1,19 +1,24 @@
+/*
+ * 文件：sensor.c
+ * 用途：读取幻尔数字灰度传感器，保存原始位图并提供I2C诊断状态。
+ * 总线：I2C1，SDA=PB3、SCL=PB2，与IMU共用；设备地址0x5D。
+ * 时序：SENSOR_ReadData() 由主循环每5ms调用一次。
+ * 数据：bit0～bit7从左到右对应S0～S7；本模块不负责计算循迹误差，
+ *       误差和拐角识别由 race_ctrl.c 完成。
+ */
+
 #include "sensor.h"
 #include "ti_msp_dl_config.h"
 
 #include <stdint.h>
 
 /*
- * sensor.c - 幻尔 8 路数字灰度传感器
- *
- * I2C0: SDA PA10, SCL PA11, 地址 0x5D，结果寄存器 5。
- * bit0 到 bit7 从左向右对应 S0 到 S7。
- *
  * 诊断码：
  *   0 = 正常
  *   4 = 传感器无响应
  *   5 = 地址有响应，但读取结果失败
  *   6 = I2C 总线忙或卡死
+ *   7 = 扫描到设备，但地址不是固定的0x5D
  */
 
 #define LINE_SENSOR_ADDR          0x5DU
@@ -117,6 +122,8 @@ static uint8_t i2c_scan_first_addr(void)
     return 0U;
 }
 
+/* 标准“写寄存器地址，再读结果”I2C 事务。灰度模块与 IMU 共用总线，
+ * 因此从空闲检测、FIFO 清理到每步超时均在此完整处理。 */
 static uint8_t i2c_write_reg_then_read(uint8_t addr, uint8_t reg, uint8_t *value)
 {
     uint32_t timeout = I2C_TIMEOUT;
@@ -182,6 +189,7 @@ static uint8_t line_sensor_read_result(uint8_t *value)
     return i2c_write_reg_then_read(LINE_SENSOR_ADDR, LINE_SENSOR_RESULT_REG, value);
 }
 
+/* 清除本地缓存与诊断状态；不在初始化阶段阻塞探测设备，首次读取时再通信。 */
 void SENSOR_Init(void)
 {
     g_rawMask = 0U;
@@ -194,6 +202,9 @@ void SENSOR_Init(void)
     i2c_clean();
 }
 
+/* 读取一帧八路灰度结果，建议由主循环每 5 ms 调用。
+ * 已确认设备在线时直接读 0x5D；读错后下一帧重新探测，既减少正常运行总线开销，
+ * 又能在插拔或异常后恢复。data 不能为空，函数通过 valid 字段明确本帧是否可信。 */
 void SENSOR_ReadData(SENSOR_Data_t *data)
 {
     uint8_t value = 0U;

@@ -1,3 +1,10 @@
+/*
+ * 文件：serial.c
+ * 用途：UART 命令与日志的非阻塞收发。
+ * 接收中断只把字节放入 RX 环形缓冲；主循环将字节组装成一行命令。
+ * 发送接口只向 TX 缓冲入队，SERIAL_Task() 再尽可能写入硬件 FIFO，
+ * 从而防止大量 PID 日志阻塞电机控制。缓冲满时允许丢弃日志字节。
+ */
 #include "serial.h"
 #include "ti_msp_dl_config.h"
 
@@ -49,6 +56,7 @@ static void tx_push(uint8_t value)
     g_txHead = next;
 }
 
+/* 清空软件缓冲并开启 UART 接收中断；UART 波特率和引脚由 SysConfig 配置。 */
 void SERIAL_Init(void)
 {
     /* 清空所有缓冲区状态 */
@@ -74,6 +82,8 @@ void SERIAL_Task(void)
     }
 }
 
+/* 从 RX 环形缓冲取出一条以 CR/LF 结束的完整命令。
+ * 连续 CRLF 只算一个分隔符；超过内部行缓冲长度的命令整行丢弃，避免截断误执行。 */
 uint8_t SERIAL_ReadLine(char *line, uint16_t capacity)
 {
     if ((line == 0) || (capacity < 2U)) {
@@ -163,6 +173,7 @@ void SERIAL_SendInt32(int32_t value)
     }
 }
 
+/* UART 接收中断：只搬运一个字节到 RX 环形缓冲，不在 ISR 中解析命令或打印日志。 */
 void UART_0_INST_IRQHandler(void)
 {
     /* 中断中不解析命令，只做最小量的数据搬运。 */

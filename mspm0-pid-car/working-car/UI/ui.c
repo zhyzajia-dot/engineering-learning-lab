@@ -1,15 +1,19 @@
+/*
+ * 文件：ui.c
+ * 用途：处理底板三个按键的消抖、短按、长按启动和运行中急停。
+ * 硬件：SW1/PB23、SW2/PA8、SW3/PB6，均使用内部上拉并低电平有效。
+ * 时序：UI_Task1ms() 必须在1ms定时中断中调用；UI_Process() 放在主循环，
+ *       将中断中产生的动作安全地交给比赛控制模块执行。
+ * 交互：空闲短按切换1～5圈，空闲长按500ms启动，运行中按键立即停车。
+ */
+
 #include "ui.h"
 #include "race_ctrl.h"
 #include "ti_msp_dl_config.h"
 
 #include <stdint.h>
 
-/*
- * KEY 是 PB21，SysConfig 里是 PULL_UP。
- * 所以：
- *   松开 = 1
- *   按下 = 0
- */
+/* 上拉输入：松开为1，按下为0。 */
 
 #define KEY_DEBOUNCE_MS             25U
 #define KEY_LONG_PRESS_MS           500U
@@ -31,18 +35,20 @@ static volatile uint8_t g_pendingAction = 0U;
 #define UI_ACTION_STOP              2U
 #define UI_ACTION_NEXT_LAP          3U
 
+/* 读取三个上拉按键并合并为一个“任意键按下”状态，低电平表示按下。 */
 static uint8_t key_pressed_raw(void)
 {
-    uint8_t high;
+    uint32_t sw1 = DL_GPIO_readPins(KEY_SW1_PORT, KEY_SW1_PIN);
+    uint32_t sw2 = DL_GPIO_readPins(KEY_SW2_PORT, KEY_SW2_PIN);
+    uint32_t sw3 = DL_GPIO_readPins(KEY_SW3_PORT, KEY_SW3_PIN);
 
-    high = (DL_GPIO_readPins(KEY_PORT, KEY_SET_PIN) != 0U) ? 1U : 0U;
-
-    /*
-     * 低电平表示按下。
-     */
-    return (high == 0U) ? 1U : 0U;
+    /* 三个按键都保持原工程的交互语义，任意一个低电平都表示按下。 */
+    return (((sw1 & KEY_SW1_PIN) == 0U) ||
+            ((sw2 & KEY_SW2_PIN) == 0U) ||
+            ((sw3 & KEY_SW3_PIN) == 0U)) ? 1U : 0U;
 }
 
+/* 以当前按键电平作为初值，并清除上电、消抖和按键动作状态。 */
 void UI_Init(void)
 {
     g_rawLast = key_pressed_raw();
@@ -56,6 +62,8 @@ void UI_Init(void)
     g_pendingAction = UI_ACTION_NONE;
 }
 
+/* 1 ms 中断任务：完成上电屏蔽、25 ms 消抖、长短按识别。
+ * 不直接控制电机，而是写入 volatile 的待执行动作，避免在中断内运行赛道状态机。 */
 void UI_Task1ms(void)
 {
     uint8_t raw;
@@ -140,6 +148,7 @@ void UI_Task1ms(void)
     g_keyLastStable = g_keyStable;
 }
 
+/* 主循环消费按键动作。读取后立即清零，且用关中断保证不会丢失/重复消费 ISR 写入的数据。 */
 void UI_Process(void)
 {
     uint8_t action;

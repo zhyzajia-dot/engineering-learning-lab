@@ -1,17 +1,17 @@
+/*
+ * 文件：encoder.c
+ * 用途：累计左右轮编码器脉冲，换算轮程和10ms周期轮速。
+ * 接线：左A/B=PA14/PA15，右A/B=PB12/PB13。
+ * 当前实现：只对左右A相上升沿计数，B相暂未参与方向判定；逻辑方向由
+ *           ENCODER_LEFT_SIGN/ENCODER_RIGHT_SIGN适配。因此倒转时本模块
+ *           仍累计绝对转动脉冲，正适合原地转弯里程判定。
+ * 标定：13线编码器、20:1减速比、48mm轮胎，每个脉冲约0.580mm。
+ */
+
 #include "encoder.h"
 #include "ti_msp_dl_config.h"
 
 #include <stdint.h>
-
-/*
- * encoder.c - MG310 霍尔编码器
- *
- * A 相上升沿中断负责累计脉冲。ENCODER_Task5ms() 每调用 4 次计算一次
- * 轮速，因此测速周期为 20 ms。
- *
- * 13 线编码器乘 20:1 减速比得到 260 count/rev。使用 48 mm 轮胎时，
- * 每个脉冲约为 0.580 mm。
- */
 
 #ifndef ENCODER_MM_PER_COUNT_X1000
 #define ENCODER_MM_PER_COUNT_X1000      580L
@@ -65,6 +65,8 @@ static void irq_restore(uint32_t primask)
     }
 }
 
+/* 按标定常量把脉冲数换算为毫米。使用放大 1000 倍的整数常量，
+ * 避免在 MCU 控制路径中引入浮点运算。 */
 static int32_t count_to_mm(int32_t count)
 {
     return (count * ENCODER_MM_PER_COUNT_X1000) / 1000L;
@@ -82,6 +84,9 @@ static void encoder_update_right(void)
     g_rightForwardCount++;
 }
 
+/* 每 10 ms 取一次“前进脉冲”快照，计算 mm/s 并进行 1:3 的低通滤波。
+ * 中断会同时更新计数器，因此读取和发布速度均以短暂关中断保护，
+ * 防止得到半更新的 32 位数据。这里的速度仅表示脉冲增加量，默认非负。 */
 static void encoder_update_speed_sample(void)
 {
     int32_t leftNowCount;
@@ -134,6 +139,8 @@ static void encoder_update_speed_sample(void)
     irq_restore(primask);
 }
 
+/* 配置左右 A 相上升沿 GPIO 中断并清空全部计数/测速历史。
+ * B 相已在硬件上引出，但当前算法不用它判方向。 */
 void ENCODER_Init(void)
 {
     DL_GPIO_setLowerPinsPolarity(GPIOA, ENCODER_LEFT_EDGE_CFG);
@@ -155,6 +162,7 @@ void ENCODER_Init(void)
     ENCODER_Reset();
 }
 
+/* 清除里程、速度和滤波历史，用于开始一趟新比赛。 */
 void ENCODER_Reset(void)
 {
     uint32_t primask;
@@ -181,6 +189,7 @@ void ENCODER_Reset(void)
     irq_restore(primask);
 }
 
+/* 仅重置速度反馈，不清除累计里程；适合控制器切换后重新建立测速基准。 */
 void ENCODER_ResetSpeedFeedback(void)
 {
     uint32_t primask;
@@ -201,6 +210,7 @@ void ENCODER_ResetSpeedFeedback(void)
     irq_restore(primask);
 }
 
+/* 由主循环每 5 ms 调用；累计两次后执行一次 10 ms 测速采样。 */
 void ENCODER_Task5ms(void)
 {
     g_speedTaskDiv++;
@@ -210,6 +220,8 @@ void ENCODER_Task5ms(void)
     }
 }
 
+/* GPIO 组中断服务：识别左右 A 相的待处理边沿、清中断标志并累加脉冲。
+ * 处理尽量短小，耗时的速度换算留给主循环任务。 */
 void GROUP1_IRQHandler(void)
 {
     uint32_t statusA = DL_GPIO_getEnabledInterruptStatus(GPIOA, ENCODER_LEFT_PINS);

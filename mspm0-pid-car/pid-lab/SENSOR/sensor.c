@@ -6,7 +6,7 @@
 /*
  * sensor.c - 幻尔 8 路数字灰度传感器
  *
- * I2C0: SDA PA10, SCL PA11, 地址 0x5D，结果寄存器 5。
+ * I2C1: SDA PB3, SCL PB2，与 IMU 共用总线；地址 0x5D，结果寄存器 5。
  * bit0 到 bit7 从左向右对应 S0 到 S7。
  *
  * 诊断码：
@@ -131,6 +131,9 @@ static uint8_t i2c_scan_first_addr(void)
 }
 
 /* 写寄存器地址再读 1 字节：通用寄存器读法 */
+/* 执行“写寄存器地址，再读一个结果字节”的完整 I2C 事务。
+ * 灰度和 IMU 共用 I2C1，因此每步都检查总线空闲、控制器错误和超时；
+ * 失败时清空 FIFO，使下一帧仍有机会重新开始通信。 */
 static uint8_t i2c_write_reg_then_read(uint8_t addr, uint8_t reg, uint8_t *value)
 {
     uint32_t timeout = I2C_TIMEOUT;
@@ -211,6 +214,9 @@ void SENSOR_Init(void)
     i2c_clean();
 }
 
+/* 读取一帧八路灰度数据，建议与 IMU 一样由 main 每 5 ms 调用。
+ * 已确认 0x5D 在线时直接读取以减少共享 I2C 总线占用；读错时下一帧重探地址。
+ * data 不可为 NULL，valid=1 才代表 mask 可供循迹/方框算法使用。 */
 void SENSOR_ReadData(SENSOR_Data_t *data)
 {
     uint8_t value = 0U;

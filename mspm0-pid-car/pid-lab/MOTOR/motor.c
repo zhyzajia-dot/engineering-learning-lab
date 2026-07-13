@@ -48,6 +48,7 @@ static int16_t abs_i16(int16_t v)
 }
 
 /* 把 PWM 绝对值写入定时器的某一通道（CC0/CC1） */
+/* 将绝对 PWM 写入定时器比较寄存器；再次限幅以保证异常上层输入不会越界。 */
 static void set_pwm_compare(uint32_t ccIndex, int16_t pwmAbs)
 {
     uint16_t duty;
@@ -98,6 +99,8 @@ static void motor_b_set_dir(int16_t pwm)
     }
 }
 
+/* 按安全顺序初始化 TB6612：先拉低 STBY、清 PWM/方向，再使能驱动和定时器，
+ * 避免上电或复位时电机出现瞬时误动作。 */
 void MOTOR_Init(void)
 {
     /* 进入安全状态：PWM 与方向都清零 */
@@ -135,6 +138,8 @@ void MOTOR_Stop(void)
     set_pwm_compare(GPIO_PWM_0_C1_IDX, 0);
 }
 
+/* 电机控制唯一入口。参数使用逻辑左右轮（正前进、负后退），模块内部完成限幅、
+ * 安装方向修正和方向/PWM 引脚输出；上层不应直接操作 TB6612 GPIO。 */
 void MOTOR_SetPWM(int16_t leftPwm, int16_t rightPwm)
 {
     int16_t logicalLeft;

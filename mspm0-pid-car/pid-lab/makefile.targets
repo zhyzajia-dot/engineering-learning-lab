@@ -1,0 +1,6 @@
+# 用户自定义构建规则：CCS 自动生成 Debug/makefile 时会保留并包含本文件。
+# Arm Hex Utility 的具体转换命令由 .cproject 自动生成；本行仅把生成的
+# BIN_OUTPUTS（当前为 pid_lab_mspm0.hex）加入默认 Build 目标。
+# 输出文件名固定，下一次成功构建会覆盖旧 HEX，不会积累多个文件。
+
+all: $(BIN_OUTPUTS)

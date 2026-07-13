@@ -9,7 +9,7 @@
  *
  * 安全约束：
  *   - 上电/复位后两个电机都保持停转
- *   - 调参模式由上位机显式开启；方框赛道也可在上电后按 SET/S1 独立启动
+ *   - 调参模式由上位机显式开启；方框赛道也可用新底板任意按键独立启动
  *   - 任何模式都受 LAB 模块自身的输出限幅与超时保护
  */
 
@@ -31,17 +31,14 @@
  * MCU 会自动复位，复位入口首先执行 MOTOR_Stop()，避免电机失控持续输出。 */
 static void watchdog_init(void)
 {
-    DL_IWDT_disableWriteProtect(LFSS);
-    DL_IWDT_setClockDivider(LFSS, DL_IWDT_CLOCK_DIVIDE_8);
-    DL_IWDT_setTimerPeriod(LFSS, DL_IWDT_TIMER_PERIOD_12_BITS);
-    DL_IWDT_enableModule(LFSS);
-    DL_IWDT_enableWriteProtect(LFSS);
-    DL_IWDT_restart(LFSS);
+    /* WWDT0 已由 SysConfig 配置为约 1 秒、无关闭窗口的看门狗模式。
+     * 此处只在各软件模块初始化完成后重新开始一次完整计时周期。 */
+    DL_WWDT_restart(WWDT0_INST);
 }
 
 static void watchdog_feed(void)
 {
-    DL_IWDT_restart(LFSS);
+    DL_WWDT_restart(WWDT0_INST);
 }
 
 /* 由 1 ms 定时器中断累加得到的时间戳，提供给其他模块做时间相关判断 */

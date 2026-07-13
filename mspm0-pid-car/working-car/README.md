@@ -1,41 +1,174 @@
-## Example Summary
+# 天猛星 MSPM0 独立循迹小车工程
 
-Empty project using DriverLib.
-This example shows a basic empty project using DriverLib with just main file
-and SysConfig initialization.
+## 1. 工程用途
 
-## Peripherals & Pin Assignments
+这是小车脱离上位机后独立运行的正式程序，主控为立创开发板“天猛星”
+MSPM0G3507 模块。程序负责灰度循迹、编码器测速闭环、左直角识别、精准
+90° 转弯、出弯重新捕线和圈数控制。
 
-| Peripheral | Pin | Function |
+与本工程配套的上位机调参工程位于：
+
+```text
+E:\zhongyaogc\mspm0_pid_lab\mspm0_pid_lab
+```
+
+本工程使用的最新版底板原理图/PCB 文件为：
+
+```text
+E:\zhongyaogc\ProDoc_Board1_2026-07-10(1).epro2
+```
+
+本工程已经按照该版底板重新适配。不要再按照之前误发的
+`ProPrj_新版_2026-07-12.epro2` 修改引脚。
+
+## 2. 当前已经实现的功能
+
+- 灰度传感器循迹，直线目标速度默认 `330 mm/s`。
+- 左右编码器测速和左右轮速度闭环。
+- 识别左直角并完成逆时针90°原地差速转弯。
+- IMU、编码器转弯里程和灰度重新捕线三重转弯判据。
+- 转弯里程在线学习，同一次上电运行中会逐角修正。
+- 支持1～5圈选择、长按启动、运行中按键急停。
+- 最后一圈第四个角完成后原地结束，不再向前多走一段。
+- IMU/I2C偶发错误容错：连续4次读取失败才判定IMU不可用。
+
+这是独立运行版本，不需要连接电脑或ESP8266才能跑车。
+
+## 3. 最新底板引脚对应关系
+
+| 功能 | MSPM0引脚 | 说明 |
 | --- | --- | --- |
-| SYSCTL |  |  |
-| DEBUGSS | PA20 | Debug Clock |
-| DEBUGSS | PA19 | Debug Data In Out |
+| TB6612 PWMA | PA12 | 左电机PWM |
+| TB6612 AIN1 | PA24 | 左电机方向 |
+| TB6612 AIN2 | PA25 | 左电机方向 |
+| TB6612 STBY | PB22 | 电机驱动使能 |
+| TB6612 BIN1 | PB9 | 右电机方向 |
+| TB6612 BIN2 | PB8 | 右电机方向 |
+| TB6612 PWMB | PA13 | 右电机PWM |
+| 左编码器A/B | PA14 / PA15 | 正交编码器输入 |
+| 右编码器A/B | PB12 / PB13 | 正交编码器输入 |
+| I2C1 SDA | PB3 | IMU与灰度传感器共用 |
+| I2C1 SCL | PB2 | IMU与灰度传感器共用 |
+| OLED SDA | PA0 | I2C0，当前只完成硬件配置 |
+| OLED SCL | PA1 | I2C0，当前只完成硬件配置 |
+| SW1 | PB23 | 低电平按下 |
+| SW2 | PA8 | 低电平按下 |
+| SW3 | PB6 | 低电平按下 |
+| LED1 | PB4 | 低电平点亮 |
+| LED2 | PB5 | 低电平点亮 |
+| H1信号 | PB10 | 外接蜂鸣器模块信号，当前保持高阻 |
+| ADC预留 | PB19 / A1_6 | 当前未使用 |
+| UART0 TX/RX预留 | PA10 / PA11 | 可用于后续串口或ESP8266 |
 
-## BoosterPacks, Board Resources & Jumper Settings
+H1接口定义：1脚GND、2脚3V3、3脚PB10/BUZZER。由于外接蜂鸣器模块
+的有效电平还没有确定，当前程序没有配置PB10输出，避免上电误响或损坏模块。
 
-Visit [LP_MSPM0G3507](https://www.ti.com/tool/LP-MSPM0G3507) for LaunchPad information, including user guide and hardware files.
+IMU和灰度传感器共用I2C1总线：
 
-| Pin | Peripheral | Function | LaunchPad Pin | LaunchPad Settings |
-| --- | --- | --- | --- | --- |
-| PA20 | DEBUGSS | SWCLK | N/A | <ul><li>PA20 is used by SWD during debugging<br><ul><li>`J101 15:16 ON` Connect to XDS-110 SWCLK while debugging<br><li>`J101 15:16 OFF` Disconnect from XDS-110 SWCLK if using pin in application</ul></ul> |
-| PA19 | DEBUGSS | SWDIO | N/A | <ul><li>PA19 is used by SWD during debugging<br><ul><li>`J101 13:14 ON` Connect to XDS-110 SWDIO while debugging<br><li>`J101 13:14 OFF` Disconnect from XDS-110 SWDIO if using pin in application</ul></ul> |
+- IMU地址：`0x23`，欧拉角起始寄存器：`0x26`。
+- 灰度传感器地址：`0x5D`。
+- PB2/PB3外接模块的上拉电阻必须上拉到3.3V，不能上拉到5V。
 
-### Device Migration Recommendations
-This project was developed for a superset device included in the LP_MSPM0G3507 LaunchPad. Please
-visit the [CCS User's Guide](https://software-dl.ti.com/msp430/esd/MSPM0-SDK/latest/docs/english/tools/ccs_ide_guide/doc_guide/doc_guide-srcs/ccs_ide_guide.html#sysconfig-project-migration)
-for information about migrating to other MSPM0 devices.
+## 4. 按键操作
 
-### Low-Power Recommendations
-TI recommends to terminate unused pins by setting the corresponding functions to
-GPIO and configure the pins to output low or input with internal
-pullup/pulldown resistor.
+SW1、SW2、SW3当前采用相同操作逻辑，任意一个按键都可以操作：
 
-SysConfig allows developers to easily configure unused pins by selecting **Board**→**Configure Unused Pins**.
+| 当前状态 | 操作 | 结果 |
+| --- | --- | --- |
+| 空闲 | 短按 | 圈数在1～5圈之间循环切换 |
+| 空闲 | 长按500ms | 清零运行数据并启动小车 |
+| 运行中 | 按下任意键 | 立即停止小车 |
 
-For more information about jumper configuration to achieve low-power using the
-MSPM0 LaunchPad, please visit the [LP-MSPM0G3507 User's Guide](https://www.ti.com/lit/slau873).
+按键消抖时间为25ms。上电后的前150ms忽略按键，防止电源抖动造成误启动。
 
-## Example Usage
+目前OLED显示驱动尚未实现，因此选择的圈数不会显示在OLED上。调试阶段建议每次
+上电后直接长按启动，此时默认运行1圈；需要多圈时，在启动前短按对应次数。
 
-Compile, load and run the example.
+## 5. 精准转弯逻辑
+
+本工程的转弯逻辑不是单纯依靠固定延时，而是从上位机调参版本移植的混合控制：
+
+1. 检测到左直角后，先以PWM 140向前接近50ms。
+2. 必须确认IMU有效，随后记录当前yaw为本次转弯的0°参考点。
+3. 如果IMU无效，电机不会先旋转；等待超过300ms仍无效则安全停止整车。
+4. 开始原地差速转弯：左轮PWM -185，右轮PWM +185。
+5. 接近目标时降为左轮 -140、右轮 +140：
+   - yaw达到72°；或
+   - 平均转弯里程接近当前目标里程25mm以内。
+6. 转弯至少持续220ms，之后满足以下任意可靠条件就结束旋转：
+   - 相对yaw达到90°；
+   - 左右轮平均转弯里程达到当前目标；
+   - 已转过一半里程，并连续3次重新看到中心线。
+7. 停止电机20ms，让车体旋转惯性稳定。
+8. 以 `140 mm/s` 低速出弯并重新进入循迹。
+
+编码器转弯目标初始为85mm。如果本次转弯是由稳定重新捕线完成，并且实际里程在
+50～140mm之间，程序会使用“3/4历史值 + 1/4本次值”更新后续转弯目标。该学习值
+只在本次上电期间保留，断电后重新从85mm开始。
+
+如果yaw、编码器里程和重新捕线在1400ms内全部没有正常触发，程序会认为传感器或
+机械状态异常并安全停车，不再用超时冒充一次正常转弯。
+
+## 6. 主循环与任务周期
+
+- 控制定时基准和按键扫描：1ms。
+- 灰度传感器读取：5ms。
+- IMU读取：5ms。
+- 编码器任务和比赛控制：5ms。
+- 编码器内部速度样本：10ms。
+
+每个5ms控制周期的关键顺序是：IMU更新 → 编码器更新 → 转弯/循迹控制。这样转弯
+判断使用的是本周期最新的yaw和编码器里程。
+
+## 7. 目录说明
+
+| 路径 | 作用 |
+| --- | --- |
+| `car.c` | 系统初始化、1ms中断和主循环任务调度 |
+| `car.syscfg` | MSPM0外设与引脚配置源文件 |
+| `RACE_CTRL/` | 循迹、速度控制、拐角识别、转弯和圈数状态机 |
+| `MPU/` | IMU的I2C读取、yaw换算和相对角度接口 |
+| `SENSOR/` | 灰度传感器I2C通信和数据处理 |
+| `ENCODER/` | 左右编码器计数、距离和速度计算 |
+| `MOTOR/` | TB6612方向与PWM驱动 |
+| `UI/` | 三个按键的消抖、短按、长按和急停逻辑 |
+| `DISPLAY/` | OLED接口占位，当前没有实际显示实现 |
+| `Debug/ti_msp_dl_config.*` | SysConfig自动生成文件，不要手工修改 |
+
+## 8. 编译和修改注意事项
+
+当前工程按照以下环境验证过完整编译和链接：
+
+- MSPM0 SDK：`2.10.00.04`
+- TI ARM Clang：`4.0.2.LTS`
+- 目标芯片：MSPM0G3507
+
+在CCS中导入包含 `.project` 和 `.ccsproject` 的本目录后编译即可。
+
+修改引脚时，只修改 `car.syscfg`，然后使用SysConfig重新生成
+`Debug/ti_msp_dl_config.c` 和 `Debug/ti_msp_dl_config.h`。不要直接编辑这两个生成文件，
+否则下次生成时会被覆盖。
+
+主要转弯参数集中在 `RACE_CTRL/race_ctrl.c` 顶部的 `LEFT_TURN_*` 宏。IMU型号不变时，
+不要随意修改 `MPU/mpu.c` 中的地址、寄存器和弧度转角度换算。
+
+## 9. 首次烧录测试顺序
+
+1. 先把驱动轮架空，确认长按启动后左右轮前进方向正确。
+2. 手动转动轮子，确认编码器计数和距离方向正常。
+3. 上电后让小车静止几秒，再开始第一圈，避免移动中初始化IMU。
+4. 第一次只跑1圈，观察四个角是否都会先快转、接近目标后慢转并短暂停顿。
+5. 确认转向和急停正常后，再放到完整赛道测试多圈一致性。
+
+代码已经通过编译和链接，但最终角度还必须以实际电池电压、轮胎、地面摩擦和传感器
+安装高度进行实车验证。首次测试不要直接把小车放在桌边高速运行。
+
+## 10. 当前暂未实现
+
+- OLED图形和文字显示。
+- H1外接蜂鸣器驱动。
+- PB19 ADC采集。
+- ESP8266或串口上位机通信。
+- 转弯学习参数断电保存。
+
+这些预留功能不会影响当前独立循迹和精准转弯。

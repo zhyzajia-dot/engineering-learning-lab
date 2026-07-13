@@ -1,3 +1,14 @@
+/*
+ * 文件：lab_ctrl.c
+ * 用途：上位机 PID 调参实验的核心控制模块。
+ *
+ * 本文件统一管理串口命令、左右轮 PI 闭环、直线同步、八路灰度循迹、
+ * 逆时针方框状态机、板载按键脱机启动、数据流/离线日志以及参数 Flash 保存。
+ * 时序：LAB_Task() 在 main 主循环中高频调用；真正的速度闭环只在编码器产生
+ * 新的 10 ms 速度样本时更新，避免对同一帧测速结果重复积分。
+ * 安全：所有模式切换先停电机并清 PI 积分；开环 PWM 有超时保护；方框模式同时
+ * 使用 IMU、编码器里程和重新捕线判断转角，任一关键条件异常会安全停车。
+ */
 #include "lab_ctrl.h"
 #include "app_config.h"
 #include "serial.h"
@@ -516,6 +527,9 @@ static uint8_t sensor_bit_active(uint8_t mask, uint8_t index)
     return (uint8_t)((mask >> index) & 0x01U);
 }
 
+/* 将灰度位掩码换算为加权横向误差（左负、右正）。
+ * 多个相邻探头同时压线时取平均；全丢线、过多探头同时触发或左右两侧都有线
+ * 而中心无线时，视为路口/异常图形并把 valid 置零，防止 PD 使用错误数据。 */
 static int16_t calculate_line_error(uint8_t mask, uint8_t *valid)
 {
     /* 把 8 路灰度传感器的位掩码换算成“线居中误差”：
@@ -726,6 +740,8 @@ static void apply_flash_v2(const LabFlashConfigV2_t *config)
     g_turnDistanceMm = (int16_t)config->turnDistanceMm;
 }
 
+/* 从固定 Flash 页加载调参结果。优先校验 V2 完整结构，同时兼容旧 V1；
+ * 校验失败时不修改当前默认参数，调用方会继续使用 app_config.h 的保底值。 */
 static uint8_t load_flash_parameters(void)
 {
     /* 从 Flash 烧写区读出参数、校验、装载到运行时变量。
@@ -829,6 +845,8 @@ static uint8_t load_flash_parameters(void)
     return 1U;
 }
 
+/* 将当前全部可调控制参数打包为 V2 结构、计算校验和并擦写 Flash。
+ * 仅由串口 SAVE 命令触发，避免控制过程中频繁擦写 Flash。 */
 static uint8_t save_flash_parameters(void)
 {
     /* 把当前所有可调参数打包写入 Flash，烧写前会关闭中断。
@@ -1569,6 +1587,8 @@ static uint8_t set_parameter(const char *name, int32_t value)
     return 1U;
 }
 
+/* 解析一条完整 ASCII 命令并执行。命令在此处统一做大小写、空白、参数范围和
+ * 模式安全检查；所有会驱动电机的命令最终仍通过受限的控制状态机下发。 */
 static void process_command(char *line, uint32_t nowMs)
 {
     /* 串口命令统一入口：
@@ -1739,6 +1759,9 @@ static void process_command(char *line, uint32_t nowMs)
     }
 }
 
+/* 方框左转子状态机：依次执行前探、IMU 相对 yaw 清零、快速原地转、减速转向、
+ * 停稳并以灰度重新捕线。转角完成条件为“捕线 / 编码器行程 / IMU 角度”之一，
+ * 但必须先达到最小转向时间；超时、IMU 长期失效或未捕线均中止本次方框。 */
 static uint8_t square_service_turn(uint32_t nowMs)
 {
     /* 方框模式下的转弯子状态机，由 update_closed_loop() 周期性调用。
@@ -1910,6 +1933,9 @@ static uint8_t square_service_turn(uint32_t nowMs)
     return 1U;
 }
 
+/* 闭环总调度。仅在检测到新的编码器速度序列后运行一次：
+ * LINE/SQUARE 先计算灰度 PD 给出的左右速度差，STRAIGHT 使用计数差同步外环，
+ * 最后两轮各自通过 PI+前馈换算 PWM。这样可保证积分周期与 10 ms 测速周期一致。 */
 static void update_closed_loop(uint32_t nowMs)
 {
     /* 主闭环调度函数：
@@ -2185,13 +2211,16 @@ static void update_closed_loop(uint32_t nowMs)
 
 static uint8_t key_pressed_raw(void)
 {
-    /* 读取 SET 键 + ARM 按键的当前电平（按下为低）
-     * 任意一个键被按下都视为“按键动作” */
-    uint32_t pins = DL_GPIO_readPins(
-        KEY_PORT, KEY_SET_PIN | KEY_ARM_BUTTON_PIN);
+    /* 新底板三个按键分别接 PB23 / PA8 / PB6，按下均为低电平。
+     * 三个引脚跨 GPIOA/GPIOB，必须分别按各自端口读取。为了保持旧工程
+     * 的脱机启动交互不变，任意一个板载按键都视为一次“按键动作”。 */
+    uint32_t sw1 = DL_GPIO_readPins(KEY_SW1_PORT, KEY_SW1_PIN);
+    uint32_t sw2 = DL_GPIO_readPins(KEY_SW2_PORT, KEY_SW2_PIN);
+    uint32_t sw3 = DL_GPIO_readPins(KEY_SW3_PORT, KEY_SW3_PIN);
 
-    return ((pins & (KEY_SET_PIN | KEY_ARM_BUTTON_PIN)) !=
-            (KEY_SET_PIN | KEY_ARM_BUTTON_PIN)) ? 1U : 0U;
+    return (((sw1 & KEY_SW1_PIN) == 0U) ||
+            ((sw2 & KEY_SW2_PIN) == 0U) ||
+            ((sw3 & KEY_SW3_PIN) == 0U)) ? 1U : 0U;
 }
 
 static void update_arm_key(uint32_t nowMs)

@@ -1,17 +1,17 @@
+/*
+ * 文件：motor.c
+ * 用途：驱动TB6612，统一管理左右电机方向、PWM限幅和安全停止。
+ * 接线：左轮=MOTOR_A/PA12，方向PA24/PA25；右轮=MOTOR_B/PA13，
+ *       方向PB9/PB8；STBY=PB22。
+ * 接口：MOTOR_SetPWM(left, right) 始终按逻辑左右轮排列，正数前进、
+ *       负数后退、0停止，允许范围最终限制在 -620～620。
+ * 注意：电机安装方向改变时只调整方向系数，不要交换上层控制的左右轮含义。
+ */
+
 #include "motor.h"
 #include "ti_msp_dl_config.h"
 
 #include <stdint.h>
-
-/*
- * motor.c - TB6612 电机驱动
- *
- * 逻辑左轮: MOTOR_A, PWM C0 (PA12), IN1 PA24, IN2 PA25
- * 逻辑右轮: MOTOR_B, PWM C1 (PA13), IN1 PB9,  IN2 PB8
- *
- * MOTOR_SetPWM() 的参数始终按 left, right 排列。正数表示小车前进，
- * 负数表示倒车。方向系数只用于适配电机安装方向。
- */
 
 #define MOTOR_LEFT_DIR_SIGN             1
 #define MOTOR_RIGHT_DIR_SIGN            1
@@ -41,6 +41,8 @@ static int16_t abs_i16(int16_t v)
     return (v >= 0) ? v : (int16_t)(-v);
 }
 
+/* 写入定时器比较值。输入必须是绝对 PWM；该处再次限幅，
+ * 保证无论上层传入何值都不会超过 SysConfig 所配置的安全输出范围。 */
 static void set_pwm_compare(uint32_t ccIndex, int16_t pwmAbs)
 {
     uint16_t duty;
@@ -84,6 +86,8 @@ static void motor_b_set_dir(int16_t pwm)
     }
 }
 
+/* 以安全停机状态初始化 TB6612：先 STBY 拉低、PWM 归零、方向全低，
+ * 再使能驱动并启动 PWM 定时器，避免上电瞬间产生不可预期的电机动作。 */
 void MOTOR_Init(void)
 {
     g_leftPwmLogical = 0;
@@ -103,6 +107,7 @@ void MOTOR_Init(void)
     DL_TimerG_startCounter(PWM_0_INST);
 }
 
+/* 安全停车：两路方向全低、占空比归零，但保持 STBY 使能，便于下一次平滑起步。 */
 void MOTOR_Stop(void)
 {
     g_leftPwmLogical = 0;
@@ -115,6 +120,9 @@ void MOTOR_Stop(void)
     set_pwm_compare(GPIO_PWM_0_C1_IDX, 0);
 }
 
+/* 电机唯一控制入口。输入是逻辑左右轮 PWM（正前进、负后退）；
+ * 先记录逻辑值供 UI/调试读取，再通过方向修正系数变成实际引脚输出。
+ * 若电机安装方向相反，只改 MOTOR_*_DIR_SIGN，不交换上层左右轮控制。 */
 void MOTOR_SetPWM(int16_t leftPwm, int16_t rightPwm)
 {
     int16_t logicalLeft;
