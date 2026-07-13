@@ -33,3 +33,9 @@ venv/
 # Logs
 logs/
 *.log
+
+# Keep K230 experiment logs visible in VS Code so selected runs can be shared.
+!k230-pid-gimbal/host/
+!k230-pid-gimbal/host/logs/
+!k230-pid-gimbal/host/logs/**
+!k230-pid-gimbal/host/logs/**/*.log
