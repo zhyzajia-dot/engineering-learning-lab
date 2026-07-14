@@ -6,8 +6,8 @@
 /*
  * encoder.c - MG310 霍尔编码器
  *
- * A 相上升沿中断负责累计脉冲。ENCODER_Task5ms() 每调用 4 次计算一次
- * 轮速，因此测速周期为 20 ms。
+ * A 相上升沿中断负责累计脉冲。ENCODER_Task5ms() 每调用 2 次计算一次
+ * 轮速，因此测速周期为 10 ms。
  *
  * 13 线编码器乘 20:1 减速比得到 260 count/rev。使用 48 mm 轮胎时，
  * 每个脉冲约为 0.580 mm。
@@ -345,4 +345,14 @@ int32_t ENCODER_GetRightDistanceMm(void)
     irq_restore(primask);
 
     return v;
+}
+
+int32_t ENCODER_GetMmPerCountX1000(void)
+{
+    return ENCODER_MM_PER_COUNT_X1000;
+}
+
+uint16_t ENCODER_GetSamplePeriodMs(void)
+{
+    return ENCODER_SAMPLE_PERIOD_MS;
 }

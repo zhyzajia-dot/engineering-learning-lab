@@ -3,7 +3,7 @@
  *
  * 模块职责：
  *   1. 串口命令解析（PWM / STEP / RUN / LINE / SQUARE / SET / SAVE / LOAD ...）
- *   2. 按键消抖与 ARM 启动
+ *   2. SW1/SW2 选圈、SW3 启停与 ARM 启动
  *   3. 车轮 PI 闭环控制
  *   4. 直线同步外环 / 循迹 PD 外环
  *   5. 逆时针正方形跑图状态机

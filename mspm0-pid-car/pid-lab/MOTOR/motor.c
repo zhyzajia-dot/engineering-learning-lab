@@ -99,16 +99,13 @@ static void motor_b_set_dir(int16_t pwm)
     }
 }
 
-/* 按安全顺序初始化 TB6612：先拉低 STBY、清 PWM/方向，再使能驱动和定时器，
- * 避免上电或复位时电机出现瞬时误动作。 */
+/* 初始化 TB6612。SysConfig 已在 GPIO 初始化阶段把 STBY 置高一次；
+ * 这里只清零方向/PWM 并启动定时器，此后不再改动 STBY。 */
 void MOTOR_Init(void)
 {
     /* 进入安全状态：PWM 与方向都清零 */
     g_leftPwmLogical = 0;
     g_rightPwmLogical = 0;
-
-    /* 拉低 STBY 期间可以安全地配置寄存器 */
-    DL_GPIO_clearPins(MOTOR_STBY_PORT, MOTOR_STBY_PIN);
 
     /* PWM 占空比清零 */
     set_pwm_compare(GPIO_PWM_0_C0_IDX, 0);
@@ -117,9 +114,6 @@ void MOTOR_Init(void)
     /* 方向线清零 */
     motor_a_set_dir(0);
     motor_b_set_dir(0);
-
-    /* 拉高 STBY，TB6612 退出待机 */
-    DL_GPIO_setPins(MOTOR_STBY_PORT, MOTOR_STBY_PIN);
 
     /* SysConfig 只完成配置，此处正式启动 PWM 计数器。 */
     DL_TimerG_startCounter(PWM_0_INST);
@@ -175,4 +169,11 @@ int16_t MOTOR_GetLeftPWM(void)
 int16_t MOTOR_GetRightPWM(void)
 {
     return g_rightPwmLogical;
+}
+
+uint8_t MOTOR_IsDriverEnabled(void)
+{
+    /* 纯输出脚没有开启输入缓冲，DIN31_0 会读成 0。
+     * 读 DOUT31_0 才能得到固件实际写入的 STBY 状态。 */
+    return ((MOTOR_STBY_PORT->DOUT31_0 & MOTOR_STBY_PIN) != 0U) ? 1U : 0U;
 }

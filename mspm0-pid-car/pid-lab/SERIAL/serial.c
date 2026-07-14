@@ -82,6 +82,20 @@ void SERIAL_Task(void)
     }
 }
 
+uint8_t SERIAL_TxCanAccept(uint16_t bytes)
+{
+    uint16_t used;
+    uint16_t freeBytes;
+
+    if (g_txHead >= g_txTail) {
+        used = (uint16_t)(g_txHead - g_txTail);
+    } else {
+        used = (uint16_t)(SERIAL_TX_BUFFER_SIZE - g_txTail + g_txHead);
+    }
+    freeBytes = (uint16_t)(SERIAL_TX_BUFFER_SIZE - used - 1U);
+    return (freeBytes >= bytes) ? 1U : 0U;
+}
+
 /* 从 RX 环形缓冲取出一条以 CR/LF 结束的完整命令。
  * 连续 CRLF 只算一个分隔符；超过内部行缓冲长度的命令整行丢弃，避免截断误执行。 */
 uint8_t SERIAL_ReadLine(char *line, uint16_t capacity)

@@ -40,4 +40,8 @@ int32_t ENCODER_GetRightCount(void);
 int32_t ENCODER_GetLeftDistanceMm(void);
 int32_t ENCODER_GetRightDistanceMm(void);
 
+/* 返回当前固件实际使用的编码器标定，供上位机协议握手校验。 */
+int32_t ENCODER_GetMmPerCountX1000(void);
+uint16_t ENCODER_GetSamplePeriodMs(void);
+
 #endif

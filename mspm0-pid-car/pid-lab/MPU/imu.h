@@ -23,8 +23,8 @@
 /* 初始化内部状态、统计计数 */
 void IMU_Init(void);
 
-/* 5 ms 周期任务：读取一帧 IMU 欧拉角，更新 yaw */
-void IMU_Task5ms(void);
+/* 10 ms 周期任务：读取一帧 IMU 欧拉角，更新 yaw */
+void IMU_Task10ms(void);
 
 /* 把当前 yaw 当作新参考点，IMU_GetRelativeYawX10() 后续返回相对值 */
 void IMU_BeginRelativeYaw(void);

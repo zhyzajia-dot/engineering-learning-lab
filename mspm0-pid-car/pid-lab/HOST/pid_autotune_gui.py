@@ -1,12 +1,11 @@
 """
-pid_autotune_gui.py - MSPM0 PI / 循迹 / 逆时针方框参数自动整定上位机
+pid_autotune_gui.py - MSPM0 小车 PID 自动调参上位机
 
 主要功能：
-  1. 通过 USB-TTL（或 ESP-NOW 桥接）连接小车，提供串口收发面板
+  1. 通过 ESP-NOW 串口桥（或外接 USB-TTL）连接小车
   2. 对左右轮的 PI / FF / MIN_PWM 参数做开环 + 阶跃自动寻优
   3. 对循迹外环 (LINEKP / LINEKD) 做自动寻优
-  4. 启动逆时针方框模式，并实时绘制目标/速度曲线、记录日志
-  5. 支持脱机直线测试 (ARM) 和上次日志回放 (DUMP)
+  4. 显示实时速度曲线、调参过程与通信诊断日志
 
 使用：
   pip install -r requirements.txt
@@ -19,12 +18,14 @@ import csv
 import json
 import math
 import queue
+import random
 import statistics
 import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import TextIO
 import tkinter as tk
 from tkinter import messagebox, ttk
 
@@ -38,15 +39,39 @@ from serial.tools import list_ports
 
 BAUD_RATE = 115200  # 与下位机约定的串口波特率
 
+# 可靠协议版本必须与固件一致。所有会改变状态的调参命令都带随机 token，
+# ACK 丢失后可安全重发，不会重新启动测试或重复擦写 Flash。
+PROTOCOL_VERSION = 2
+COMMAND_ACK_TIMEOUT = 0.65
+COMMAND_RETRIES = 5
+
+# 每个开环点 1.5 s，前 0.7 s 由固件丢弃，只统计稳态段。
+OPEN_TUNE_DURATION_MS = 1500
+
+# 编码器固件以 2500 mm/s 作为异常钳位；接近该值的前馈点已失去
+# 线性信息，不能用于拟合 PWM-速度斜率。
+ENCODER_SPEED_CLIP_MMPS = 2450
+
 # 单轮阶跃自动寻优时的目标速度（mm/s）
 TARGET_SPEED_MMPS = 300
 
-# 开环前馈辨识：在每个 PWM 上停留 1.25 s，稳态后取均值
-OPEN_PWM_POINTS = (70, 100, 130, 160, 190, 220)
+# 开环前馈辨识必须覆盖闭环目标速度附近。实测 PWM=220 已达到约
+# 1200 mm/s，原先从 220 扫到 600 会让一半数据撞上 2500 mm/s 钳位，
+# 再把高速直线外推到 300 mm/s，得到的 FF/MIN 没有可信度。
+# 从低占空比逐步上探，达到目标速度约 2.2 倍后立即停止扫描；最后两个点只在
+# 电机死区或供电较弱时才会执行，避免再次把轮子推到编码器钳位区。
+OPEN_PWM_POINTS = (35, 45, 55, 70, 90, 115, 145, 180, 220, 270)
 
 # 单轮 PI 自动寻优时扫描的候选值
-KP_CANDIDATES = (200, 350, 500, 650, 800, 1000)
-KI_CANDIDATES = (0, 50, 100, 200, 350, 500)
+# 同时覆盖 7 月 3 日旧量纲下的较高最优值和 7 月 14 日新数据下的低增益
+# 区域；不稳定的高增益由 MCU 900 mm/s 硬保护提前淘汰。
+KP_CANDIDATES = (50, 100, 200, 350, 500, 800, 1200)
+KI_CANDIDATES = (0, 50, 100, 200, 350, 500, 800)
+
+# 粗扫后把前两名各复测一次；最终验证另跑一次，既过滤偶发扰动又避免过去
+# 每个轴重复四次复测造成的长时间空转。
+WHEEL_FINALIST_COUNT = 2
+WHEEL_FINALIST_RETESTS = 1
 
 # 循迹外环 LINEKP / LINEKD 自动寻优时扫描的候选值
 LINE_KP_CANDIDATES = (4500, 6000, 7500, 9000)
@@ -60,7 +85,7 @@ LINE_PROBE_KICK_MMPS = 55
 LINE_PROBE_KICK_MS = 300
 
 # 直线同步外环机械偏置（与下位机 LAB_DEFAULT_RIGHT_BIAS_MMPS 一致）
-STRAIGHT_BIAS_X10000 = 25
+STRAIGHT_BIAS_MMPS = 25
 
 # 循迹参数的安全范围（防止越界写入）
 LINE_KP_SAFE_RANGE = (2500, 14000)
@@ -103,6 +128,21 @@ class PidSample:
 
         列数分别对应旧固件（12）、加循迹（15）、加方框（18）、加转弯里程（19）。"""
         parts = line.strip().split(",")
+        if len(parts) == 13 and parts[0] == "LT":
+            try:
+                values = [int(value) for value in parts[1:]]
+            except ValueError:
+                return None
+            return cls(
+                time_ms=values[0], mode="SQUARE",
+                left_target=values[1], right_target=values[2],
+                left_speed=values[3], right_speed=values[4],
+                left_pwm=0, right_pwm=0, left_error=0, right_error=0,
+                count_diff=0, line_error=values[5], line_mask=values[6],
+                line_valid=values[7], yaw_x10=values[8],
+                corner_count=values[9], square_state=values[10],
+                turn_travel_mm=values[11],
+            )
         if len(parts) not in (12, 15, 18, 19) or parts[0] != "PID":
             return None
         try:
@@ -157,12 +197,44 @@ class SerialLink:
     def __init__(self) -> None:
         self.serial: serial.Serial | None = None
         # AutoTuner 关心的数据行（每行完整）
-        self.data_queue: queue.Queue[str] = queue.Queue()
+        self.data_queue: queue.Queue[str] = queue.Queue(maxsize=4096)
         # UI 日志 / 绘图用的所有原始行（包括 PONG / STATUS / SENSOR 等）
-        self.display_queue: queue.Queue[str] = queue.Queue()
+        self.display_queue: queue.Queue[str] = queue.Queue(maxsize=4096)
         self.stop_event = threading.Event()
         self.reader_thread: threading.Thread | None = None
         self.write_lock = threading.Lock()
+        self.trace_lock = threading.Lock()
+        self.trace_path: Path | None = None
+        self.trace_handle: TextIO | None = None
+
+    def set_trace_path(self, path: Path | None) -> None:
+        """设置本次任务的完整协议追踪文件；不影响串口实时线程。"""
+        with self.trace_lock:
+            if self.trace_handle is not None:
+                try:
+                    self.trace_handle.close()
+                except OSError:
+                    pass
+                self.trace_handle = None
+            self.trace_path = path
+            if path is not None:
+                try:
+                    self.trace_handle = path.open(
+                        "w", encoding="utf-8", buffering=1
+                    )
+                except OSError:
+                    self.trace_path = None
+
+    def _trace(self, direction: str, text: str) -> None:
+        with self.trace_lock:
+            if self.trace_handle is None:
+                return
+            timestamp = datetime.now().isoformat(timespec="milliseconds")
+            try:
+                self.trace_handle.write(f"{timestamp} {direction} {text}\n")
+            except OSError:
+                self.trace_path = None
+                self.trace_handle = None
 
     @property
     def connected(self) -> bool:
@@ -214,6 +286,7 @@ class SerialLink:
             except serial.SerialException:
                 pass
         self.serial = None
+        self.set_trace_path(None)
 
     def send(self, command: str) -> None:
         """发出一条 ASCII 命令（自动加 \\r\\n）。
@@ -223,6 +296,7 @@ class SerialLink:
         if not self.connected:
             raise RuntimeError("Serial port is not connected")
         payload = (command.strip() + "\r\n").encode("ascii")
+        self._trace("TX", command.strip())
         with self.write_lock:
             assert self.serial is not None
             last_error: Exception | None = None
@@ -256,6 +330,23 @@ class SerialLink:
             except queue.Empty:
                 return
 
+    @staticmethod
+    def _put_latest(target: queue.Queue[str], line: str) -> None:
+        """队列满时丢最旧一行，保证最新 ACK/安全错误仍能进入。"""
+        try:
+            target.put_nowait(line)
+            return
+        except queue.Full:
+            pass
+        try:
+            target.get_nowait()
+        except queue.Empty:
+            pass
+        try:
+            target.put_nowait(line)
+        except queue.Full:
+            pass
+
     def _reader_loop(self) -> None:
         """独立读线程：把串口字节流按 \\n 切行，再分别塞进 data / display 队列。"""
         pending = bytearray()
@@ -266,7 +357,9 @@ class SerialLink:
             except (serial.SerialException, OSError) as exc:
                 if not self.stop_event.is_set():
                     # 主动关闭时不刷错误信息；被动断开才提示
-                    self.display_queue.put(f"SERIAL ERROR: {exc}")
+                    self._put_latest(
+                        self.display_queue, f"SERIAL ERROR: {exc}"
+                    )
                 return
             if not raw:
                 continue
@@ -277,8 +370,9 @@ class SerialLink:
                 line = raw_line.decode("ascii", errors="replace").strip()
                 if not line:
                     continue
-                self.data_queue.put(line)
-                self.display_queue.put(line)
+                self._trace("RX", line)
+                self._put_latest(self.data_queue, line)
+                self._put_latest(self.display_queue, line)
 
 
 class AutoTuner:
@@ -308,6 +402,9 @@ class AutoTuner:
         self.session_dir: Path | None = None
         # {'L': {...}, 'R': {...}}，保存最终写给小车的参数
         self.results: dict[str, dict[str, int | float]] = {}
+        self.tune_token = random.SystemRandom().randrange(1, 2_147_483_648)
+        self.protocol_info: dict[str, int | str] = {}
+        self.feedforward_diagnostics: dict[str, dict[str, object]] = {}
 
     @property
     def running(self) -> bool:
@@ -347,6 +444,32 @@ class AutoTuner:
         """给 UI 推一条状态文本。"""
         self.status_queue.put(text)
 
+    def _save_failure(self, text: str) -> None:
+        """把失败原因写进本次会话目录，避免只留在 GUI 文本框。"""
+        if self.session_dir is not None:
+            try:
+                (self.session_dir / "failure.txt").write_text(
+                    text + "\n", encoding="utf-8"
+                )
+            except OSError:
+                # 日志落盘失败不能阻止后面的 STOP 安全命令。
+                pass
+        self._save_session_info()
+
+    def _save_session_info(self) -> None:
+        if self.session_dir is None:
+            return
+        try:
+            (self.session_dir / "session_info.json").write_text(
+                json.dumps({
+                    "protocol": self.protocol_info,
+                    "feedforward": self.feedforward_diagnostics,
+                }, indent=2),
+                encoding="ascii",
+            )
+        except OSError:
+            pass
+
     def _check_cancelled(self) -> None:
         """在长循环里周期性调用：用户取消时直接抛异常跳出。"""
         if self.cancel_event.is_set():
@@ -357,33 +480,40 @@ class AutoTuner:
 
         步骤：
           1. 新建 logs/<时间戳> 目录
-          2. PING/PONG 验证连接
-          3. 对每个轮子跑 _tune_wheel()（辨识前馈 + 搜 Kp/Ki + 验证）
+          2. 直接对每个轮子跑 _tune_wheel()（辨识前馈 + 搜 Kp/Ki + 验证）
           4. 写 SET BIAS、SAVE，把最终参数交给下位机 Flash
           5. 把 results 写到 tuned_params.json"""
         try:
+            # 每次会话从空结果开始，避免单轮重跑时把上一次会话的旧结果
+            # 一起写进新的 tuned_params.json。
+            self.results = {}
+            self.feedforward_diagnostics = {}
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             self.session_dir = Path(__file__).parent / "logs" / stamp
             self.session_dir.mkdir(parents=True, exist_ok=True)
+            self.link.set_trace_path(self.session_dir / "protocol_trace.log")
 
             self._verify_connection()
+            self._stop_reliably()
+            self._status("Reliable wheel tune started")
             for wheel in wheels:
                 self._check_cancelled()
                 self.results[wheel] = self._tune_wheel(wheel)
 
             self.link.drain_data()
-            self._send_set("BIAS", STRAIGHT_BIAS_X10000)
-            self.link.send("SAVE")
-            if self._wait_for(lambda item: item == "OK SAVE", 3.0) is None:
-                raise RuntimeError("MCU could not save parameters to flash")
+            self._send_set("BIAS", STRAIGHT_BIAS_MMPS)
+            self._save_parameters()
 
             result_path = self.session_dir / "tuned_params.json"
             result_path.write_text(
                 json.dumps(self.results, indent=2), encoding="ascii"
             )
+            self._save_session_info()
             self._status(f"COMPLETE: parameters saved to {result_path}")
         except Exception as exc:
-            self._status(f"FAILED: {exc}")
+            failure = f"FAILED: {exc}"
+            self._save_failure(failure)
+            self._status(failure)
             try:
                 self.link.send("STOP")
             except Exception:
@@ -393,13 +523,119 @@ class AutoTuner:
             self.finished_callback()
 
     def _verify_connection(self) -> None:
-        """发 PING 等 PONG，确认下位机协议在线。"""
+        """可靠握手并校验协议版本、STBY 与编码器量纲。"""
         self.link.drain_data()
-        self.link.send("PING")
-        line = self._wait_for(lambda item: item == "PONG", 2.0)
+        token = self._next_tune_token()
+        expected = f"HELLO,{token},"
+        line = self._request_with_retry(
+            f"HELLO {token}",
+            lambda item: item.startswith(expected),
+            "firmware HELLO",
+        )
         if line is None:
-            raise RuntimeError("No PONG from firmware")
-        self._status("Firmware connection verified")
+            raise RuntimeError(
+                "No reliable HELLO response; flash the matching MSPM0 and "
+                "both ESP8266 bridge firmwares"
+            )
+        parts = line.split(",")
+        try:
+            version = int(parts[2])
+            fields = {
+                parts[index]: parts[index + 1]
+                for index in range(3, len(parts) - 1, 2)
+            }
+            mm_x1000 = int(fields["ENCODER_MM_X1000"])
+            sample_ms = int(fields["SAMPLE_MS"])
+        except (IndexError, KeyError, ValueError):
+            raise RuntimeError(f"Invalid firmware HELLO: {line}")
+        if version != PROTOCOL_VERSION:
+            raise RuntimeError(
+                f"Protocol mismatch: PC={PROTOCOL_VERSION}, firmware={version}"
+            )
+        if fields.get("STBY") != "HIGH":
+            raise RuntimeError("TB6612 STBY is LOW; motor driver is disabled")
+        if not 100 <= mm_x1000 <= 2000 or not 5 <= sample_ms <= 50:
+            raise RuntimeError(
+                f"Unsafe encoder calibration reported by firmware: {line}"
+            )
+        self.protocol_info = {
+            "version": version,
+            "encoder_mm_per_count_x1000": mm_x1000,
+            "encoder_sample_ms": sample_ms,
+            "stby": fields["STBY"],
+        }
+        self._status(
+            f"Firmware v{version} verified; encoder={mm_x1000}/1000 mm/count, "
+            f"sample={sample_ms} ms"
+        )
+
+    def _request_with_retry(
+        self, command: str, predicate, description: str,
+        retries: int = COMMAND_RETRIES,
+        timeout: float = COMMAND_ACK_TIMEOUT,
+    ) -> str | None:
+        """重发幂等命令，直到收到与本次 token 匹配的响应。"""
+        for _ in range(retries):
+            self._check_cancelled()
+            self.link.send(command)
+            reply = self._wait_for(predicate, timeout)
+            if reply is not None:
+                return reply
+        self._status(f"Communication retry exhausted: {description}")
+        return None
+
+    def _stop_reliably(self) -> None:
+        """STOP 可幂等重发；开始任务前清掉任何孤立的旧测试。"""
+        self.link.drain_data()
+        reply = self._request_with_retry(
+            "STOP", lambda item: item == "OK STOP", "STOP", retries=4
+        )
+        if reply != "OK STOP":
+            raise RuntimeError("MCU did not confirm the safe STOP state")
+
+    def _verify_motor_driver(self) -> None:
+        """Verify that firmware commands the TB6612 STBY output high."""
+        self.link.drain_data()
+        line = self._request_with_retry(
+            "STATUS", lambda item: item.startswith("STATUS,"), "STATUS"
+        )
+        if line is None:
+            raise RuntimeError("No STATUS response from firmware")
+        if ",STBY,HIGH" not in line:
+            if ",STBY,LOW" in line:
+                raise RuntimeError(
+                    "Firmware STBY output is LOW; motor driver is disabled"
+                )
+            raise RuntimeError(
+                "Firmware is too old: flash the new HEX with STBY status"
+            )
+        self._status("TB6612 STBY output is HIGH")
+
+    def _start_square_reliably(self, speed: int, laps: int) -> None:
+        """带 token 启动方框；重复请求不会让已经运行的车辆重新起跑。"""
+        token = self._next_tune_token()
+        expected = f"SQ,{token},OK"
+        self.link.drain_data()
+        reply = self._request_with_retry(
+            f"SQUARE {speed} {laps} {token}",
+            lambda item: item.startswith(f"SQ,{token},"),
+            "SQUARE start",
+            timeout=0.9,
+        )
+        if reply != expected:
+            raise RuntimeError(f"square start rejected: {reply or 'timeout'}")
+
+    def _send_kick(self, amount: int, duration_ms: int) -> bool:
+        """可靠注入一次循迹扰动；若恰逢转弯则返回 False，稍后再试。"""
+        token = self._next_tune_token()
+        expected = f"KA,{token},OK"
+        reply = self._request_with_retry(
+            f"KICK {amount} {duration_ms} {token}",
+            lambda item: item.startswith(f"KA,{token},"),
+            "line KICK",
+            retries=2,
+        )
+        return reply == expected
 
     def _run_line(self) -> None:
         """方框模式下的循迹 LINEKP / LINEKD 自动寻优主流程。
@@ -407,24 +643,27 @@ class AutoTuner:
         步骤：
           1. 验证连接 + 灰度 + IMU 都正常
           2. 启动 SQUARE 10 圈作为测试舞台
-          3. 粗扫 LINEKP -> 精扫 LINEKP（2 轮局部搜索）
-          4. 用当前最佳 Kp 粗扫 LINEKD -> 精扫 LINEKD
+          3. 粗扫 LINEKP -> 一轮局部搜索
+          4. 用当前最佳 Kp 粗扫 LINEKD -> 一轮局部搜索
           5. 在 (best_kp, best_kd) 周围做 3x3 联合寻优
           6. 和历史 champion 对比，把更优的写为新 champion
           7. 多次验证取中位数作为最终分数
           8. SET LINEKP/LINEKD + SAVE"""
         try:
+            self.feedforward_diagnostics = {}
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             self.session_dir = (
                 Path(__file__).parent / "logs" / f"line_{stamp}"
             )
             self.session_dir.mkdir(parents=True, exist_ok=True)
+            self.link.set_trace_path(self.session_dir / "protocol_trace.log")
             self._verify_connection()
+            self._stop_reliably()
+            self._verify_motor_driver()
             # 灰度检查
             self.link.drain_data()
-            self.link.send("SENSOR")
-            sensor_line = self._wait_for(
-                lambda item: item.startswith("SENSOR,"), 2.0
+            sensor_line = self._request_with_retry(
+                "SENSOR", lambda item: item.startswith("SENSOR,"), "SENSOR"
             )
             if sensor_line is None:
                 raise RuntimeError("no response from line sensor check")
@@ -441,9 +680,8 @@ class AutoTuner:
 
             # IMU 检查
             self.link.drain_data()
-            self.link.send("IMU")
-            imu_line = self._wait_for(
-                lambda item: item.startswith("IMU,"), 2.0
+            imu_line = self._request_with_retry(
+                "IMU", lambda item: item.startswith("IMU,"), "IMU"
             )
             if imu_line is None or not imu_line.startswith("IMU,OK,"):
                 raise RuntimeError(
@@ -452,12 +690,13 @@ class AutoTuner:
 
             # 让小车在方框模式下持续跑，方便我们在每个 Kp/Kd 组合下打分
             self.link.drain_data()
-            self.link.send(f"SQUARE {LINE_TUNE_SPEED_MMPS} 10")
-            started = self._wait_for(
-                lambda item: item.startswith("TEST START,SQUARE"), 3.0
+            compact_ready = self._request_with_retry(
+                "STREAM TUNE", lambda item: item == "OK STREAM TUNE",
+                "compact telemetry",
             )
-            if started is None:
-                raise RuntimeError("square line-autotune could not start")
+            if compact_ready is None:
+                raise RuntimeError("compact line telemetry was not enabled")
+            self._start_square_reliably(LINE_TUNE_SPEED_MMPS, 10)
             self._status(
                 "Square line autotune running; turns are excluded from scoring"
             )
@@ -596,9 +835,7 @@ class AutoTuner:
             self._send_set("LINEKP", best_kp)
             self._send_set("LINEKD", best_kd)
             self.link.drain_data()
-            self.link.send("SAVE")
-            if self._wait_for(lambda item: item == "OK SAVE", 3.0) is None:
-                raise RuntimeError("MCU could not save line parameters")
+            self._save_parameters()
 
             result = {
                 "line_kp_x1000": best_kp,
@@ -618,13 +855,14 @@ class AutoTuner:
                     round(value, 5) for value in incumbent_scores
                 ],
                 "selection_reason": selected_reason,
-                "search": "coarse + 2x local + joint neighborhood",
+                "search": "coarse + local + joint neighborhood",
                 "score_version": LINE_SCORE_VERSION,
             }
             result_path = self.session_dir / "line_tuned_params.json"
             result_path.write_text(
                 json.dumps(result, indent=2), encoding="ascii"
             )
+            self._save_session_info()
             # 只有确实胜出或没有旧冠军时才覆盖全局最佳参数文件。
             if champion_replaced:
                 champion_path.write_text(
@@ -635,7 +873,9 @@ class AutoTuner:
                 f"Kd={best_kd}/1000, saved to {result_path}"
             )
         except Exception as exc:
-            self._status(f"LINE FAILED: {exc}")
+            failure = f"LINE FAILED: {exc}"
+            self._save_failure(failure)
+            self._status(failure)
             try:
                 self.link.send("STOP")
             except Exception:
@@ -651,10 +891,7 @@ class AutoTuner:
         seed_scores: list[tuple[float, int]],
         initial_step: int,
     ) -> int:
-        """对单个轴 (kp 或 kd) 做两轮局部搜索。
-
-        每轮在当前最佳值两侧等间距取 5 个候选，
-        步长每轮减半。第二轮起点用第一轮结果。"""
+        """对单个轴做一轮三点局部搜索，随后由联合邻域完成精修。"""
         bounds = (
             LINE_KP_SAFE_RANGE if axis == "kp" else LINE_KD_SAFE_RANGE
         )
@@ -662,32 +899,24 @@ class AutoTuner:
         best = initial
         step = initial_step
 
-        for round_index in range(2):
-            offsets = (-step, -(step // 2), 0, step // 2, step)
-            candidates = sorted(
-                {
-                    max(bounds[0], min(bounds[1], best + offset))
-                    for offset in offsets
-                }
+        offsets = (-(step // 2), 0, step // 2)
+        candidates = sorted({
+            max(bounds[0], min(bounds[1], best + offset))
+            for offset in offsets
+        })
+        for value in candidates:
+            if value in measured:
+                continue
+            kp = value if axis == "kp" else fixed
+            kd = fixed if axis == "kp" else value
+            measured[value] = self._run_square_line_candidate(
+                kp, kd, f"refine_{axis}_{value}", sample_target=80
             )
-            for value in candidates:
-                if value in measured:
-                    # 之前粗扫已经测过了就不再重复
-                    continue
-                kp = value if axis == "kp" else fixed
-                kd = fixed if axis == "kp" else value
-                measured[value] = self._run_square_line_candidate(
-                    kp,
-                    kd,
-                    f"refine_{axis}_r{round_index + 1}_{value}",
-                    sample_target=80,
-                )
-            best = min(measured, key=measured.get)
-            self._status(
-                f"{axis.upper()} refine round {round_index + 1}: "
-                f"best={best}/1000 score={measured[best]:.3f}"
-            )
-            step = max(250 if axis == "kp" else 125, step // 2)
+        best = min(measured, key=measured.get)
+        self._status(
+            f"{axis.upper()} local refine: best={best}/1000 "
+            f"score={measured[best]:.3f}"
+        )
         return best
 
     def _run_square_line_candidate(
@@ -719,16 +948,12 @@ class AutoTuner:
             self._check_cancelled()
             if kick_stage == 0 and len(samples) >= 15:
                 # 先向右踢一脚
-                self.link.send(
-                    f"KICK {LINE_PROBE_KICK_MMPS} {LINE_PROBE_KICK_MS}"
-                )
-                kick_stage = 1
+                if self._send_kick(LINE_PROBE_KICK_MMPS, LINE_PROBE_KICK_MS):
+                    kick_stage = 1
             elif kick_stage == 1 and len(samples) >= sample_target // 2:
                 # 再向左踢一脚，构成一次正反扰动
-                self.link.send(
-                    f"KICK {-LINE_PROBE_KICK_MMPS} {LINE_PROBE_KICK_MS}"
-                )
-                kick_stage = 2
+                if self._send_kick(-LINE_PROBE_KICK_MMPS, LINE_PROBE_KICK_MS):
+                    kick_stage = 2
             try:
                 line = self.link.data_queue.get(timeout=0.1)
             except queue.Empty:
@@ -749,7 +974,7 @@ class AutoTuner:
                     settle_samples -= 1
                     continue
                 samples.append(sample)
-                if max(sample.left_speed, sample.right_speed) > 1000:
+                if max(abs(sample.left_speed), abs(sample.right_speed)) > 1000:
                     # 异常速度：主动停机并报错
                     self.link.send("STOP")
                     raise RuntimeError("Unsafe encoder speed detected")
@@ -901,32 +1126,97 @@ class AutoTuner:
                 continue
             if predicate(line):
                 return line
+            if line.startswith(("SQUARE ERROR", "SQUARE DONE", "SERIAL ERROR:")):
+                raise RuntimeError(line)
         return None
 
-    def _collect_for(self, duration: float) -> list[PidSample]:
-        """在指定时长内收集尽可能多的 PID 样本。
+    def _run_tune_transaction(
+        self,
+        command: str,
+        token: int,
+        wheel: str,
+        kind: str,
+        result_prefix: str,
+        test_duration_ms: int,
+    ) -> str | None:
+        """可靠启动一次本地测试，再通过只读 TUNEGET 取回缓存结果。"""
+        ack = f"TA,{token},{kind},{wheel}"
+        result: str | None = None
+        self.link.drain_data()
 
-        主要用于开环前馈辨识阶段：每个 PWM 点停留期间把所有数据存起来。"""
-        samples: list[PidSample] = []
-        deadline = time.monotonic() + duration
+        # TUNEOPEN/TUNESTEP 是幂等命令：相同 token 重发只补 ACK，不重启电机。
+        for _ in range(COMMAND_RETRIES):
+            self._check_cancelled()
+            self.link.send(command)
+            reply = self._wait_for(
+                lambda item: (
+                    item == ack or item.startswith(result_prefix) or
+                    item.startswith(f"TE,{token},")
+                ),
+                COMMAND_ACK_TIMEOUT,
+            )
+            if reply is None:
+                continue
+            if reply.startswith(result_prefix):
+                return reply
+            if reply == ack:
+                break
+            if reply == f"TE,{token},BUSY":
+                time.sleep(0.15)
+                continue
+            raise RuntimeError(f"MCU rejected tune request: {reply}")
+        else:
+            return None
+
+        deadline = time.monotonic() + (test_duration_ms / 1000.0) + 2.5
+        next_get = time.monotonic() + (test_duration_ms / 1000.0) + 0.05
         while time.monotonic() < deadline:
             self._check_cancelled()
             try:
-                line = self.link.data_queue.get(timeout=0.1)
+                line = self.link.data_queue.get(timeout=0.08)
             except queue.Empty:
-                continue
-            sample = PidSample.parse(line)
-            if sample is not None:
-                samples.append(sample)
-                if max(sample.left_speed, sample.right_speed) > 1000:
-                    self.link.send("STOP")
-                    raise RuntimeError("Unsafe encoder speed detected")
-        return samples
+                line = None
+            if line is not None and line.startswith(result_prefix):
+                result = line
+                break
+            if time.monotonic() >= next_get:
+                self.link.send(f"TUNEGET {token}")
+                next_get = time.monotonic() + 0.22
+        return result
+
+    def _next_tune_token(self) -> int:
+        self.tune_token = (self.tune_token % 2_147_483_647) + 1
+        return self.tune_token
 
     def _send_set(self, name: str, value: int) -> None:
-        """发 SET name value 命令并等 80 ms 让下位机写入并回复。"""
-        self.link.send(f"SET {name} {value}")
-        time.sleep(0.08)
+        """带 token 写参数；响应丢失可重发且不再回传冗长 PARAM 行。"""
+        token = self._next_tune_token()
+        expected = f"SA,{token},{name},{value}"
+        reply = self._request_with_retry(
+            f"SET {name} {value} {token}",
+            lambda item: item == expected or item.startswith("ERR "),
+            f"SET {name}",
+        )
+        if reply != expected:
+            raise RuntimeError(
+                f"MCU rejected SET {name} {value}: {reply or 'timeout'}"
+            )
+
+    def _save_parameters(self) -> None:
+        """带 token 保存；ACK 丢失后不会再次擦写 Flash。"""
+        token = self._next_tune_token()
+        expected = f"SV,{token},OK"
+        reply = self._request_with_retry(
+            f"SAVE {token}",
+            lambda item: item in (expected, f"SV,{token},ERR"),
+            "Flash SAVE",
+            timeout=1.0,
+        )
+        if reply != expected:
+            raise RuntimeError(
+                f"MCU could not save parameters to flash: "
+                f"{reply or 'timeout'}"
+            )
 
     def _tune_wheel(self, wheel: str) -> dict[str, int | float]:
         """对单个车轮跑完整寻优：前馈 -> Kp -> Ki -> 验证。
@@ -946,7 +1236,7 @@ class AutoTuner:
 
         self._send_set(f"{wheel}KP", best_kp)
         self._send_set(f"{wheel}KI", best_ki)
-        validation, score = self._run_step(
+        validation_samples, score = self._run_step(
             wheel, best_kp, best_ki, 3000, "validation"
         )
         self._status(
@@ -959,46 +1249,58 @@ class AutoTuner:
             "kp_x1000": best_kp,
             "ki_x1000": best_ki,
             "validation_score": round(score, 5),
-            "validation_samples": len(validation),
+            "validation_samples": validation_samples,
         }
 
     def _identify_feedforward(self, wheel: str) -> tuple[int, int]:
         """通过开环扫 PWM 拟合 pwm = a * speed + b，得出 min_pwm 和 ff_x1000。
 
-        步骤：
-          1. 开 STREAM ON
-          2. 在每个 PWM 点上停留 1.25 s，丢弃前 0.7 s 启动数据后再取均值
-          3. 用所有稳态点做线性回归（最小二乘）
-          4. 把截距截到 [20, 160] -> min_pwm，斜率 * 1000 截到 [50, 1000] -> ff_x1000"""
+        每个档位由 MCU 本地完成固定测试窗并只回传汇总；拟合采用 Theil-Sen
+        中位数斜率，降低偶发异常帧的影响。"""
         points: list[tuple[float, int]] = []
         all_rows: list[list[object]] = []
 
-        self.link.drain_data()
-        self.link.send("STREAM ON")
-        time.sleep(0.15)
-
         for pwm in OPEN_PWM_POINTS:
             self._check_cancelled()
-            self._status(f"{wheel}: PWM sweep {pwm}")
-            self.link.send(f"PWM {wheel} {pwm}")
-            samples = self._collect_for(1.25)
-            settled = [
-                sample.speed(wheel)
-                for sample in samples
-                if sample.time_ms >= 700
-            ]
-            speed = statistics.mean(settled) if settled else 0.0
-            all_rows.append([pwm, round(speed, 3), len(samples)])
-            if speed >= 35:
-                # 速度太低说明还在死区；不进入拟合
+            self._status(f"{wheel}: local PWM identification {pwm}")
+            token = self._next_tune_token()
+            command = (
+                f"TUNEOPEN {wheel} {pwm} {OPEN_TUNE_DURATION_MS} {token}"
+            )
+            line = self._run_tune_transaction(
+                command, token, wheel, "O", f"TO,{token},{wheel},",
+                OPEN_TUNE_DURATION_MS,
+            )
+            if line is None:
+                raise RuntimeError(f"{wheel}: no local PWM result for {pwm}")
+            parts = line.split(",")
+            try:
+                reported_pwm = int(parts[3])
+                speed = float(int(parts[4]))
+                sample_count = int(parts[5])
+                max_speed = int(parts[6])
+                flags = int(parts[7])
+            except (IndexError, ValueError):
+                raise RuntimeError(f"{wheel}: invalid PWM result: {line}")
+            if reported_pwm != pwm:
+                raise RuntimeError(f"{wheel}: incomplete PWM result: {line}")
+            all_rows.append(
+                [pwm, round(speed, 3), sample_count, max_speed, flags]
+            )
+            if flags != 0:
+                self._status(
+                    f"{wheel}: safety stop at PWM={pwm}, max={max_speed} mm/s"
+                )
+                break
+            if sample_count < 20:
+                raise RuntimeError(f"{wheel}: incomplete PWM result: {line}")
+            if 35 <= speed < ENCODER_SPEED_CLIP_MMPS:
                 points.append((speed, pwm))
-            self.link.send(f"PWM {wheel} 0")
-            time.sleep(0.18)
-
-        self.link.send("STREAM OFF")
+            if speed >= TARGET_SPEED_MMPS * 2.2 and len(points) >= 4:
+                break
         self._save_rows(
             f"{wheel}_feedforward.csv",
-            ["pwm", "steady_speed_mmps", "sample_count"],
+            ["pwm", "steady_speed_mmps", "sample_count", "max_speed", "flags"],
             all_rows,
         )
 
@@ -1007,133 +1309,194 @@ class AutoTuner:
                 f"{wheel}: encoder did not provide enough usable speed points"
             )
 
-        # 一元线性回归：speed -> pwm
-        mean_speed = statistics.mean(point[0] for point in points)
-        mean_pwm = statistics.mean(point[1] for point in points)
-        variance = sum((speed - mean_speed) ** 2 for speed, _ in points)
-        if variance <= 0:
+        ordered = sorted(points, key=lambda point: point[1])
+        large_drops = sum(
+            1 for previous, current in zip(ordered, ordered[1:])
+            if current[0] < previous[0] * 0.85
+        )
+        if large_drops:
+            raise RuntimeError(
+                f"{wheel}: PWM-speed response is not monotonic; check encoder "
+                "wiring, wheel friction, and battery"
+            )
+        speeds = [speed for speed, _ in points]
+        if min(speeds) > TARGET_SPEED_MMPS or max(speeds) < TARGET_SPEED_MMPS:
+            raise RuntimeError(
+                f"{wheel}: open-loop scan did not bracket {TARGET_SPEED_MMPS} "
+                f"mm/s (measured {min(speeds):.0f}..{max(speeds):.0f}); "
+                "verify encoder scale and motor supply"
+            )
+
+        # 只要目标工作区附近有足够数据，就不用远高于目标的高速点拉偏
+        # FF 斜率；若电机死区很大，再自动退回全部可用点。
+        operating_points = [
+            point for point in points
+            if point[0] <= TARGET_SPEED_MMPS * 2.5
+        ]
+        if len(operating_points) >= 3:
+            points = operating_points
+
+        slopes = [
+            (pwm_b - pwm_a) / (speed_b - speed_a)
+            for index, (speed_a, pwm_a) in enumerate(points)
+            for speed_b, pwm_b in points[index + 1:]
+            if abs(speed_b - speed_a) >= 5
+        ]
+        if not slopes:
             raise RuntimeError(f"{wheel}: invalid PWM-speed identification")
+        slope = statistics.median(slopes)
+        intercept = statistics.median(
+            pwm - slope * speed for speed, pwm in points
+        )
 
-        slope = sum(
-            (speed - mean_speed) * (pwm - mean_pwm)
-            for speed, pwm in points
-        ) / variance
-        intercept = mean_pwm - slope * mean_speed
-
-        min_pwm = max(20, min(160, round(intercept)))
+        min_pwm = max(0, min(450, round(intercept)))
         ff_x1000 = max(50, min(1000, round(slope * 1000)))
+        predicted_target_pwm = intercept + slope * TARGET_SPEED_MMPS
+        if not min(pwm for _, pwm in points) - 20 <= predicted_target_pwm <= \
+                max(pwm for _, pwm in points) + 20:
+            raise RuntimeError(f"{wheel}: feedforward fit extrapolates outside scan")
+        self.feedforward_diagnostics[wheel] = {
+            "slope_pwm_per_mmps": round(slope, 6),
+            "intercept_pwm": round(intercept, 3),
+            "predicted_pwm_at_target": round(predicted_target_pwm, 3),
+            "usable_points": [[round(speed, 3), pwm] for speed, pwm in points],
+        }
         return min_pwm, ff_x1000
 
     def _search_kp(self, wheel: str) -> int:
-        """在 KP_CANDIDATES 里挑最优 Kp（Ki 临时置 0）。"""
+        """Kp 粗扫后复测前两名，以中位数抵抗电池/编码器偶发扰动。"""
         self._send_set(f"{wheel}KI", 0)
         scored: list[tuple[float, int]] = []
         for kp in KP_CANDIDATES:
             self._check_cancelled()
             self._status(f"{wheel}: testing Kp={kp}/1000")
-            _, score = self._run_step(wheel, kp, 0, 1800, f"kp_{kp}")
+            _, score = self._run_step(wheel, kp, 0, 1500, f"kp_{kp}")
             scored.append((score, kp))
-            time.sleep(0.25)
-        scored.sort()
-        self._status(f"{wheel}: selected Kp={scored[0][1]}/1000")
-        return scored[0][1]
+        best = self._retest_wheel_finalists(wheel, "kp", scored, 0)
+        self._status(f"{wheel}: selected Kp={best}/1000")
+        return best
 
     def _search_ki(self, wheel: str, kp: int) -> int:
-        """在 KI_CANDIDATES 里挑最优 Ki（Kp 固定为传入值）。"""
+        """Ki 粗扫后复测前两名，以中位数选出稳定解。"""
         scored: list[tuple[float, int]] = []
         for ki in KI_CANDIDATES:
             self._check_cancelled()
             self._status(f"{wheel}: testing Ki={ki}/1000")
-            _, score = self._run_step(wheel, kp, ki, 2500, f"ki_{ki}")
+            _, score = self._run_step(wheel, kp, ki, 2000, f"ki_{ki}")
             scored.append((score, ki))
-            time.sleep(0.25)
-        scored.sort()
-        self._status(f"{wheel}: selected Ki={scored[0][1]}/1000")
-        return scored[0][1]
+        best = self._retest_wheel_finalists(wheel, "ki", scored, kp)
+        self._status(f"{wheel}: selected Ki={best}/1000")
+        return best
+
+    def _retest_wheel_finalists(
+        self,
+        wheel: str,
+        axis: str,
+        scored: list[tuple[float, int]],
+        fixed: int,
+    ) -> int:
+        """复测两个最佳候选，采用重复测试的中位数决策。"""
+        finalists = sorted(scored)[:WHEEL_FINALIST_COUNT]
+        ranked: list[tuple[float, int]] = []
+        for initial_score, value in finalists:
+            scores = [initial_score]
+            for index in range(WHEEL_FINALIST_RETESTS):
+                self._check_cancelled()
+                kp = value if axis == "kp" else fixed
+                ki = fixed if axis == "kp" else value
+                self._status(
+                    f"{wheel}: validating {axis.upper()}={value}/1000 "
+                    f"({index + 1}/{WHEEL_FINALIST_RETESTS})"
+                )
+                _, score = self._run_step(
+                    wheel, kp, ki,
+                    1800 if axis == "kp" else 2300,
+                    f"{axis}_{value}_validation_{index + 1}",
+                )
+                scores.append(score)
+            median_score = statistics.median(scores)
+            ranked.append((median_score, value))
+            self._status(
+                f"{wheel}: {axis.upper()}={value}/1000 "
+                f"median score={median_score:.3f}"
+            )
+        ranked.sort()
+        return ranked[0][1]
 
     def _run_step(
         self, wheel: str, kp: int, ki: int, duration_ms: int, name: str
-    ) -> tuple[list[PidSample], float]:
-        """跑一次单轮 STEP 测试并打 _score_step 分，返回 (样本, 分数)。"""
+    ) -> tuple[int, float]:
+        """运行静默本地 STEP；无线桥只回传一条汇总指标。"""
         self._send_set(f"{wheel}KP", kp)
         self._send_set(f"{wheel}KI", ki)
-        self.link.drain_data()
-        self.link.send(f"STEP {wheel} {TARGET_SPEED_MMPS} {duration_ms}")
-
-        samples: list[PidSample] = []
-        deadline = time.monotonic() + (duration_ms / 1000.0) + 3.0
-        completed = False
-        while time.monotonic() < deadline:
-            self._check_cancelled()
-            try:
-                line = self.link.data_queue.get(timeout=0.1)
-            except queue.Empty:
-                continue
-            if line == "TEST DONE":
-                completed = True
-                break
-            sample = PidSample.parse(line)
-            if sample is not None:
-                samples.append(sample)
-                if sample.speed(wheel) > 1000:
-                    self.link.send("STOP")
-                    raise RuntimeError("Unsafe encoder speed detected")
-
-        if not completed or len(samples) < 20:
-            raise RuntimeError(f"{wheel}: incomplete step test")
-
-        score = self._score_step(samples, wheel)
-        self._save_samples(f"{wheel}_{name}.csv", samples)
-        return samples, score
-
-    @staticmethod
-    def _score_step(samples: list[PidSample], wheel: str) -> float:
-        """给单轮阶跃响应打一个综合分（越小越好）。
-
-        组成项：
-          - 整体平均误差       weight = 1.0
-          - 超调              weight = 3.0 （重点惩罚）
-          - 末段稳态误差       weight = 2.5
-          - 末段波动 (pstdev)  weight = 1.2
-          - 上升时间惩罚       weight = 0.35
-          - 饱和占比           weight = 2.0 （PWM 长期贴边视为不好）"""
-        target = TARGET_SPEED_MMPS
-        speeds = [sample.speed(wheel) for sample in samples]
-        if not speeds:
-            return math.inf
-
-        absolute_error = statistics.mean(
-            abs(target - speed) for speed in speeds
-        ) / target
-        overshoot = max(0, max(speeds) - target) / target
-
-        # 末段 1/4 视为稳态
-        tail_count = max(5, len(speeds) // 4)
-        tail = speeds[-tail_count:]
-        steady_error = abs(statistics.mean(tail) - target) / target
-        ripple = statistics.pstdev(tail) / target if len(tail) > 1 else 0
-
-        # 上升时间：第一次达到 90% 目标的时间
-        rise_time = samples[-1].time_ms
-        for sample in samples:
-            if sample.speed(wheel) >= int(target * 0.9):
-                rise_time = sample.time_ms
-                break
-        rise_penalty = min(1.0, rise_time / 1500.0)
-
-        # PWM 饱和占比：贴着 500 满占空比的比例
-        saturation = sum(
-            1 for sample in samples if sample.pwm(wheel) >= 495
-        ) / len(samples)
-
-        return (
-            absolute_error
-            + (3.0 * overshoot)
-            + (2.5 * steady_error)
-            + (1.2 * ripple)
-            + (0.35 * rise_penalty)
-            + (2.0 * saturation)
+        token = self._next_tune_token()
+        command = (
+            f"TUNESTEP {wheel} {TARGET_SPEED_MMPS} {duration_ms} {token}"
         )
+        line = self._run_tune_transaction(
+            command, token, wheel, "S", f"TS,{token},{wheel},", duration_ms
+        )
+        if line is None:
+            raise RuntimeError(f"{wheel}: no local STEP result")
+        try:
+            (_, reported_token, reported_wheel, count, sum_abs, max_speed,
+             tail_count, tail_sum, tail_square_sum, rise_ms,
+              saturation_count, flags) = line.split(",")
+            if (int(reported_token) != token or reported_wheel != wheel):
+                raise ValueError
+            count = int(count)
+            sum_abs = int(sum_abs)
+            max_speed = int(max_speed)
+            tail_count = int(tail_count)
+            tail_sum = int(tail_sum)
+            tail_square_sum = int(tail_square_sum)
+            rise_ms = int(rise_ms)
+            saturation_count = int(saturation_count)
+            flags = int(flags)
+        except ValueError:
+            raise RuntimeError(f"{wheel}: invalid local STEP result: {line}")
+        if flags != 0:
+            score = 100.0 + (max_speed / max(1, TARGET_SPEED_MMPS))
+            self._save_rows(
+                f"{wheel}_{name}.csv",
+                ["sample_count", "mean_abs_error", "max_speed", "tail_count",
+                 "tail_mean", "tail_ripple", "rise_ms", "saturation",
+                 "flags", "score"],
+                [[count, 0, max_speed, tail_count, 0, 0, rise_ms, 0,
+                  flags, round(score, 6)]],
+            )
+            self._status(
+                f"{wheel}: {name} rejected by firmware safety limit "
+                f"(max={max_speed} mm/s)"
+            )
+            return count, score
+        if count < 20 or tail_count < 5:
+            raise RuntimeError(f"{wheel}: incomplete local STEP result: {line}")
+
+        target = TARGET_SPEED_MMPS
+        mean_error = (sum_abs / count) / target
+        overshoot = max(0.0, max_speed - target) / target
+        tail_mean = tail_sum / tail_count
+        variance = max(0.0, (tail_square_sum / tail_count) - tail_mean ** 2)
+        ripple = math.sqrt(variance) / target
+        steady_error = abs(tail_mean - target) / target
+        rise_penalty = min(1.0, rise_ms / 1500.0)
+        saturation = saturation_count / count
+        score = (
+            mean_error + (3.0 * overshoot) + (2.5 * steady_error) +
+            (1.2 * ripple) + (0.35 * rise_penalty) +
+            (2.0 * saturation)
+        )
+        self._save_rows(
+            f"{wheel}_{name}.csv",
+            ["sample_count", "mean_abs_error", "max_speed", "tail_count",
+             "tail_mean", "tail_ripple", "rise_ms", "saturation", "flags",
+             "score"],
+            [[count, round(mean_error, 6), max_speed, tail_count,
+              round(tail_mean, 3), round(ripple, 6), rise_ms,
+              round(saturation, 6), flags, round(score, 6)]],
+        )
+        return count, score
 
     def _save_samples(self, name: str, samples: list[PidSample]) -> None:
         """把一组 PidSample 落盘为 CSV，列顺序和下位机 send_stream_sample 一致。"""
@@ -1207,9 +1570,9 @@ class App(tk.Tk):
     - 把后台寻优线程的 status_queue / display_queue 渲染到 UI"""
     def __init__(self) -> None:
         super().__init__()
-        self.title("MSPM0 小车 PID 自动调试上位机")
-        self.geometry("1220x760")
-        self.minsize(980, 680)
+        self.title("MSPM0 小车 PID 自动调参上位机")
+        self.geometry("1100x720")
+        self.minsize(920, 640)
 
         self.link = SerialLink()
         # AutoTuner 推给 UI 的状态文本
@@ -1219,13 +1582,9 @@ class App(tk.Tk):
         )
         # 最近 250 帧的 PID 样本，用于实时绘图
         self.plot_samples: list[PidSample] = []
-        # 接收 DUMP 时的全部样本（最后落盘到 straight_dump.csv）
-        self.dump_samples: list[PidSample] = []
-        self.dump_receiving = False
-        # 方框跑动时的实时样本（最后落盘到 square_run.csv）
+        # 手动方形赛道 / IMU 转弯验证的原始数据与参数快照。
         self.square_samples: list[PidSample] = []
         self.square_running = False
-        # 保存下位机最近一次 PARAM 报告，写入每次方框测试快照。
         self.current_parameters: dict[str, int] = {}
         # 用来把绘图刷新降到每 10 帧一次（CPU 优化）
         self.pid_display_divider = 0
@@ -1233,12 +1592,11 @@ class App(tk.Tk):
         # ---------- 串口 / 状态相关 StringVar ----------
         self.port_var = tk.StringVar()
         self.connection_var = tk.StringVar(value="未连接")
-        # 安全门：必须显式勾选才能开自动整定 / 方框
+        # 安全门：必须显式勾选才能启动对应的自动整定。
         self.raise_confirmed = tk.BooleanVar(value=False)
         self.track_confirmed = tk.BooleanVar(value=False)
-        # ---------- 用户可调参数 ----------
-        self.straight_speed_var = tk.IntVar(value=200)
-        self.straight_seconds_var = tk.IntVar(value=8)
+        self.manual_pwm_var = tk.IntVar(value=120)
+        # 方形赛道使用 IMU yaw 完成转弯；这些是对应的可调参数。
         self.square_speed_var = tk.IntVar(value=340)
         self.square_laps_var = tk.IntVar(value=1)
         self.turn_angle_var = tk.IntVar(value=900)
@@ -1248,7 +1606,6 @@ class App(tk.Tk):
         self.turn_exit_var = tk.IntVar(value=140)
         self.turn_distance_var = tk.IntVar(value=85)
         self.status_var = tk.StringVar(value="就绪")
-        self.advanced_visible = False
 
         self._build_ui()
         self._refresh_ports()
@@ -1258,7 +1615,7 @@ class App(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_ui(self) -> None:
-        """创建精简主界面；低频诊断功能放进可折叠高级区。"""
+        """创建调参专用主界面。"""
         top = ttk.Frame(self, padding=10)
         top.pack(fill=tk.X)
 
@@ -1277,10 +1634,29 @@ class App(tk.Tk):
         ttk.Label(top, textvariable=self.connection_var).pack(
             side=tk.LEFT, padx=12
         )
-        self.advanced_button = ttk.Button(
-            top, text="展开高级设置", command=self._toggle_advanced
+
+        manual = ttk.LabelFrame(self, text="直接电机 PWM", padding=(10, 6))
+        manual.pack(fill=tk.X, padx=10, pady=(0, 6))
+        ttk.Label(manual, text="PWM (0-300，悬空短测)").pack(side=tk.LEFT)
+        ttk.Spinbox(
+            manual, from_=0, to=300, increment=10, width=6,
+            textvariable=self.manual_pwm_var,
+        ).pack(side=tk.LEFT, padx=(6, 12))
+        self.manual_left_button = ttk.Button(
+            manual, text="左轮输出", command=lambda: self._send_direct_pwm("L")
         )
-        self.advanced_button.pack(side=tk.RIGHT)
+        self.manual_left_button.pack(side=tk.LEFT, padx=3)
+        self.manual_right_button = ttk.Button(
+            manual, text="右轮输出", command=lambda: self._send_direct_pwm("R")
+        )
+        self.manual_right_button.pack(side=tk.LEFT, padx=3)
+        self.manual_both_button = ttk.Button(
+            manual, text="两轮输出", command=lambda: self._send_direct_pwm("B")
+        )
+        self.manual_both_button.pack(side=tk.LEFT, padx=3)
+        ttk.Button(manual, text="停止", command=self._stop).pack(
+            side=tk.LEFT, padx=(12, 3)
+        )
 
         tune = ttk.LabelFrame(self, text="自动调参", padding=(10, 6))
         tune.pack(fill=tk.X, padx=10, pady=(0, 6))
@@ -1311,78 +1687,27 @@ class App(tk.Tk):
             side=tk.RIGHT
         )
 
-        race = ttk.LabelFrame(self, text="方形赛道运行", padding=(10, 6))
-        race.pack(fill=tk.X, padx=10, pady=(0, 6))
-        ttk.Label(race, text="速度 (mm/s)").pack(side=tk.LEFT)
+        square = ttk.LabelFrame(
+            self, text="方形赛道 / IMU 转弯验证", padding=(10, 6)
+        )
+        square.pack(fill=tk.X, padx=10, pady=(0, 6))
+        ttk.Label(square, text="速度 (mm/s)").pack(side=tk.LEFT)
         ttk.Spinbox(
-            race,
-            from_=80,
-            to=450,
-            increment=10,
-            width=7,
+            square, from_=80, to=450, increment=10, width=7,
             textvariable=self.square_speed_var,
-        ).pack(side=tk.LEFT, padx=(6, 14))
-        ttk.Label(race, text="圈数").pack(side=tk.LEFT)
+        ).pack(side=tk.LEFT, padx=(6, 12))
+        ttk.Label(square, text="圈数").pack(side=tk.LEFT)
         ttk.Spinbox(
-            race,
-            from_=1,
-            to=10,
-            increment=1,
-            width=5,
+            square, from_=1, to=10, increment=1, width=5,
             textvariable=self.square_laps_var,
-        ).pack(side=tk.LEFT, padx=6)
+        ).pack(side=tk.LEFT, padx=(6, 12))
         self.square_button = ttk.Button(
-            race,
-            text="运行逆时针方形",
-            command=self._start_square,
+            square, text="运行逆时针方形", command=self._start_square
         )
         self.square_button.pack(side=tk.LEFT, padx=6)
 
-        self.advanced_frame = ttk.LabelFrame(
-            self, text="高级诊断与底层参数", padding=(10, 6)
-        )
-        diagnostic = ttk.Frame(self.advanced_frame)
-        diagnostic.pack(fill=tk.X)
-        self.auto_left_button = ttk.Button(
-            diagnostic,
-            text="仅调左轮",
-            command=lambda: self._start_autotune(("L",)),
-        )
-        self.auto_left_button.pack(side=tk.LEFT, padx=(0, 6))
-        self.auto_right_button = ttk.Button(
-            diagnostic,
-            text="仅调右轮",
-            command=lambda: self._start_autotune(("R",)),
-        )
-        self.auto_right_button.pack(side=tk.LEFT, padx=6)
-        ttk.Button(
-            diagnostic, text="应用上次轮速参数",
-            command=self._apply_last_result
-        ).pack(side=tk.LEFT, padx=6)
-        ttk.Button(
-            diagnostic, text="准备脱机直线测试",
-            command=self._straight_test
-        ).pack(side=tk.LEFT, padx=6)
-        ttk.Button(
-            diagnostic, text="读取上次直线日志",
-            command=self._read_last_run
-        ).pack(side=tk.LEFT, padx=6)
-
-        straight = ttk.Frame(self.advanced_frame)
-        straight.pack(fill=tk.X, pady=(8, 0))
-        ttk.Label(straight, text="直线速度").pack(side=tk.LEFT)
-        ttk.Spinbox(
-            straight, from_=80, to=600, increment=10, width=6,
-            textvariable=self.straight_speed_var
-        ).pack(side=tk.LEFT, padx=(4, 10))
-        ttk.Label(straight, text="时间(秒)").pack(side=tk.LEFT)
-        ttk.Spinbox(
-            straight, from_=1, to=12, increment=1, width=5,
-            textvariable=self.straight_seconds_var
-        ).pack(side=tk.LEFT, padx=(4, 14))
-
-        turn = ttk.Frame(self.advanced_frame)
-        turn.pack(fill=tk.X, pady=(8, 0))
+        turn = ttk.Frame(square)
+        turn.pack(side=tk.RIGHT)
         turn_fields = (
             ("转角×0.1°", self.turn_angle_var, 700, 1100, 5),
             ("快速PWM", self.turn_fast_var, 100, 300, 5),
@@ -1395,8 +1720,36 @@ class App(tk.Tk):
             ttk.Label(turn, text=label).pack(side=tk.LEFT)
             ttk.Spinbox(
                 turn, from_=minimum, to=maximum, increment=increment,
-                width=6, textvariable=variable
-            ).pack(side=tk.LEFT, padx=(4, 10))
+                width=5, textvariable=variable,
+            ).pack(side=tk.LEFT, padx=(3, 6))
+
+        quick_diagnostic = ttk.LabelFrame(
+            self, text="通信诊断", padding=(10, 6)
+        )
+        quick_diagnostic.pack(fill=tk.X, padx=10, pady=(0, 6))
+        ttk.Label(
+            quick_diagnostic, text="检查结果显示在下方日志："
+        ).pack(side=tk.LEFT)
+        ttk.Button(
+            quick_diagnostic,
+            text="检查通信",
+            command=lambda: self._send_diagnostic("PING"),
+        ).pack(side=tk.LEFT, padx=(10, 4))
+        ttk.Button(
+            quick_diagnostic,
+            text="检查灰度传感器",
+            command=lambda: self._send_diagnostic("SENSOR"),
+        ).pack(side=tk.LEFT, padx=(10, 4))
+        ttk.Button(
+            quick_diagnostic,
+            text="检查 IMU",
+            command=lambda: self._send_diagnostic("IMU"),
+        ).pack(side=tk.LEFT, padx=4)
+        ttk.Button(
+            quick_diagnostic,
+            text="检查无线桥",
+            command=lambda: self._send_diagnostic("RADIOPING"),
+        ).pack(side=tk.LEFT, padx=4)
 
         self.status_label = ttk.Label(
             self, textvariable=self.status_var, padding=(10, 0, 10, 6)
@@ -1412,26 +1765,13 @@ class App(tk.Tk):
         # --- 日志框 ---
         log_frame = ttk.Frame(self, padding=(10, 0, 10, 10))
         log_frame.pack(fill=tk.BOTH, expand=True)
-        self.log = tk.Text(log_frame, wrap=tk.NONE, height=16)
+        self.log = tk.Text(log_frame, wrap=tk.NONE, height=16, state=tk.DISABLED)
         scroll_y = ttk.Scrollbar(
             log_frame, orient=tk.VERTICAL, command=self.log.yview
         )
         self.log.configure(yscrollcommand=scroll_y.set)
         self.log.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
-
-    def _toggle_advanced(self) -> None:
-        """展开或收起低频使用的单轮、直线和底层转弯设置。"""
-        self.advanced_visible = not self.advanced_visible
-        if self.advanced_visible:
-            self.advanced_frame.pack(
-                fill=tk.X, padx=10, pady=(0, 6),
-                before=self.status_label
-            )
-            self.advanced_button.configure(text="收起高级设置")
-        else:
-            self.advanced_frame.pack_forget()
-            self.advanced_button.configure(text="展开高级设置")
 
     def _refresh_ports(self) -> None:
         """重新扫描系统串口并填充到下拉框；默认选第一个。"""
@@ -1464,18 +1804,63 @@ class App(tk.Tk):
         try:
             self.link.connect(port)
             self.connection_var.set(f"正在打开：{port}")
-            self.update_idletasks()
-            time.sleep(1.2)
-            self.link.send("PING")
-            time.sleep(0.1)
-            self.link.send("PARAM")
-            self.connection_var.set(f"已连接：{port}")
-            self.connect_button.configure(text="断开")
+            self.connect_button.configure(state=tk.DISABLED)
+            # ESP8266 上电提示可能仍在输出；用 after 延迟探测，不能 sleep 卡住 UI。
+            self.after(800, lambda: self._finish_connection_probe(port))
         except Exception as exc:
             self.link.close(send_stop=False)
             self.connection_var.set("未连接")
             self.connect_button.configure(text="连接")
             messagebox.showerror("串口连接失败", str(exc))
+
+    def _finish_connection_probe(self, port: str) -> None:
+        """串口打开后的非阻塞探测；自动任务还会执行严格的 V2 握手。"""
+        try:
+            if not self.link.connected:
+                raise RuntimeError("serial port closed during startup")
+            self.link.send("PING")
+            self.link.send("PARAM")
+            self.connection_var.set(f"已连接：{port}")
+            self.connect_button.configure(text="断开", state=tk.NORMAL)
+        except Exception as exc:
+            self.link.close(send_stop=False)
+            self.connection_var.set("未连接")
+            self.connect_button.configure(text="连接", state=tk.NORMAL)
+            messagebox.showerror("串口连接失败", str(exc))
+
+    def _send_diagnostic(self, command: str) -> None:
+        """通过快捷按钮发送一条只读诊断命令。"""
+        if not self.link.connected:
+            messagebox.showerror("通信诊断", "请先连接小车")
+            return
+        try:
+            self.link.send(command)
+            self.status_var.set(f"已发送 {command}，等待下方日志返回")
+        except Exception as exc:
+            messagebox.showerror("通信诊断", str(exc))
+
+    def _send_direct_pwm(self, wheel: str) -> None:
+        """不等待 PING/STATUS/ACK，直接让指定轮输出当前 PWM。"""
+        if not self.link.connected:
+            messagebox.showerror("直接电机 PWM", "请先连接小车")
+            return
+        if self.tuner.running or self.square_running:
+            messagebox.showerror("直接电机 PWM", "请先停止当前自动任务")
+            return
+        try:
+            pwm = int(self.manual_pwm_var.get())
+        except (tk.TclError, ValueError):
+            messagebox.showerror("直接电机 PWM", "PWM 必须是 0 到 300 的整数")
+            return
+        if not 0 <= pwm <= 300:
+            messagebox.showerror("直接电机 PWM", "PWM 必须在 0 到 300 之间")
+            return
+        try:
+            self.link.send(f"PWM {wheel} {pwm}")
+            target = {"L": "左轮", "R": "右轮", "B": "两轮"}[wheel]
+            self.status_var.set(f"已直接发送：{target} PWM={pwm}")
+        except Exception as exc:
+            messagebox.showerror("直接电机 PWM", str(exc))
 
     def _start_autotune(self, wheels: tuple[str, ...]) -> None:
         """Auto Tune Left / Right / Both 按钮的统一入口。
@@ -1489,8 +1874,9 @@ class App(tk.Tk):
                 "安全确认", "自动调整轮速前必须悬空两个驱动轮"
             )
             return
-        if self.tuner.running:
+        if self.tuner.running or self.square_running:
             return
+        self.link.send("STOP")
         self.plot_samples.clear()
         self.status_var.set("正在自动调整轮速参数")
         self._set_tune_buttons(False)
@@ -1509,8 +1895,9 @@ class App(tk.Tk):
                 "请把小车放在封闭循迹赛道，并确认场地安全",
             )
             return
-        if self.tuner.running:
+        if self.tuner.running or self.square_running:
             return
+        self.link.send("STOP")
         self.plot_samples.clear()
         self.status_var.set("正在自动调整循迹 PID")
         self._set_tune_buttons(False)
@@ -1535,6 +1922,7 @@ class App(tk.Tk):
             return
         if self.tuner.running or self.square_running:
             return
+        self.link.send("STOP")
         try:
             speed = int(self.square_speed_var.get())
             laps = int(self.square_laps_var.get())
@@ -1581,44 +1969,99 @@ class App(tk.Tk):
             "Keep the STOP button reachable.",
         ):
             return
+        self.square_samples.clear()
+        self.plot_samples.clear()
+        self.square_running = True
+        self._set_tune_buttons(False)
+        self.status_var.set("正在检查传感器、写入参数并启动方形赛道")
+        threading.Thread(
+            target=self._configure_and_start_square,
+            args=(
+                speed, laps, angle, fast_pwm, slow_pwm,
+                margin, exit_speed, turn_distance,
+            ),
+            daemon=True,
+        ).start()
+
+    def _wait_host_reply(self, predicate, timeout: float) -> str | None:
+        """供非调参工作线程等待固件回复；UI 日志仍走 display_queue。"""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if not self.square_running:
+                return None
+            try:
+                line = self.link.data_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            if predicate(line):
+                return line
+        return None
+
+    def _configure_and_start_square(
+        self,
+        speed: int,
+        laps: int,
+        angle: int,
+        fast_pwm: int,
+        slow_pwm: int,
+        margin: int,
+        exit_speed: int,
+        turn_distance: int,
+    ) -> None:
+        """后台完成诊断、参数确认、Flash 保存和 SQUARE 启动握手。"""
         try:
+            self.tuner.cancel_event.clear()
+            self.link.drain_data()
+            self.tuner._verify_connection()
+            self.tuner._stop_reliably()
+
+            sensor = self.tuner._request_with_retry(
+                "SENSOR", lambda item: item.startswith("SENSOR,"), "SENSOR"
+            )
+            if sensor is None or not sensor.startswith("SENSOR,OK,"):
+                raise RuntimeError(
+                    f"line sensor is not ready: {sensor or 'timeout'}"
+                )
+
+            imu = self.tuner._request_with_retry(
+                "IMU", lambda item: item.startswith("IMU,"), "IMU"
+            )
+            if imu is None or not imu.startswith("IMU,OK,"):
+                raise RuntimeError(f"IMU is not ready: {imu or 'timeout'}")
+
+            # 先把慢速 PWM 临时降到合法下限，再设置快速和最终慢速值。
+            # 这样无论 Flash 中旧的 fast/slow 大小关系如何，都不会因为
+            # 固件的交叉范围检查而悄悄拒绝新参数。
             commands = (
-                ("TURNANGLE", angle),
+                ("TURNSLOW", 80),
                 ("TURNFAST", fast_pwm),
                 ("TURNSLOW", slow_pwm),
+                ("TURNANGLE", angle),
                 ("TURNMARGIN", margin),
                 ("TURNEXIT", exit_speed),
                 ("TURNDIST", turn_distance),
             )
-            self.link.drain_data()
-            self.link.send("SENSOR")
-            time.sleep(0.08)
-            self.link.send("IMU")
-            time.sleep(0.08)
-            # 每次 SET 之间稍等一下，让下位机处理完上一条再发下一条
             for name, value in commands:
-                self.link.send(f"SET {name} {value}")
-                time.sleep(0.06)
-            self.link.send("SAVE")
-            time.sleep(0.2)
-            self.square_samples.clear()
-            self.plot_samples.clear()
-            self.square_running = True
-            self.square_button.configure(state=tk.DISABLED)
-            self.link.send(f"SQUARE {speed} {laps}")
-            self.status_var.set(
+                self.tuner._send_set(name, value)
+
+            self.tuner._save_parameters()
+            self.tuner._start_square_reliably(speed, laps)
+            self.status_queue.put(
                 f"CCW square running: {laps} lap(s), STOP remains available"
             )
         except Exception as exc:
-            self.square_running = False
-            self.square_button.configure(state=tk.NORMAL)
-            messagebox.showerror("方形赛道", str(exc))
+            try:
+                if self.link.connected:
+                    self.link.send("STOP")
+            except Exception:
+                pass
+            self.link.display_queue.put(f"HOST SQUARE ERROR,{exc}")
 
     def _stop(self) -> None:
-        """STOP 按钮入口：取消寻优、停方框、恢复按钮。"""
+        """紧急停止：取消自动整定或方形验证，并立即给小车发送 STOP。"""
         self.tuner.cancel()
         self.square_running = False
-        self.square_button.configure(state=tk.NORMAL)
+        self._set_tune_buttons(True)
         self.status_var.set("已请求紧急停止")
 
     def _apply_last_result(self) -> None:
@@ -1639,6 +2082,9 @@ class App(tk.Tk):
             messagebox.showerror("Parameters", "No saved tuning result")
             return
         try:
+            self.tuner.cancel_event.clear()
+            self.tuner._verify_connection()
+            self.tuner._stop_reliably()
             results = json.loads(result_files[0].read_text(encoding="ascii"))
             for wheel in ("L", "R"):
                 if wheel not in results:
@@ -1651,11 +2097,9 @@ class App(tk.Tk):
                     (f"{wheel}KI", values["ki_x1000"]),
                 )
                 for name, value in commands:
-                    self.link.send(f"SET {name} {int(value)}")
-                    time.sleep(0.08)
-            self.link.send(f"SET BIAS {STRAIGHT_BIAS_X10000}")
-            time.sleep(0.08)
-            self.link.send("SAVE")
+                    self.tuner._send_set(name, int(value))
+            self.tuner._send_set("BIAS", STRAIGHT_BIAS_MMPS)
+            self.tuner._save_parameters()
             self.status_var.set(f"Applied {result_files[0]}")
         except Exception as exc:
             messagebox.showerror("Parameters", str(exc))
@@ -1674,6 +2118,7 @@ class App(tk.Tk):
         if self.tuner.running:
             messagebox.showerror("Straight test", "Autotune is still running")
             return
+        self.link.send("STOP")
         try:
             speed = int(self.straight_speed_var.get())
             seconds = int(self.straight_seconds_var.get())
@@ -1700,8 +2145,10 @@ class App(tk.Tk):
             return
         try:
             self.plot_samples.clear()
-            self.link.send("SAVE")
-            time.sleep(0.25)
+            self.tuner.cancel_event.clear()
+            self.tuner._verify_connection()
+            self.tuner._stop_reliably()
+            self.tuner._save_parameters()
             self.link.send(f"ARM {speed} {seconds * 1000}")
             self.status_var.set(
                 "ARMED: disconnect TTL, place car, press SET"
@@ -1898,22 +2345,21 @@ class App(tk.Tk):
         self.status_queue.put("__FINISHED__")
 
     def _set_tune_buttons(self, enabled: bool) -> None:
-        """同时启用/禁用所有自动整定按钮，避免用户重复点击。"""
+        """同时启用/禁用调参按钮，避免用户重复点击。"""
         state = tk.NORMAL if enabled else tk.DISABLED
-        self.auto_left_button.configure(state=state)
-        self.auto_right_button.configure(state=state)
         self.auto_both_button.configure(state=state)
         self.auto_line_button.configure(state=state)
+        self.square_button.configure(state=state)
 
     def _poll_queues(self) -> None:
         """50 ms 一次的轮询：
 
-        1. 拉空 display_queue：可解析成 PidSample 的塞进 plot/dump/square 缓冲，
-           其它特殊行（DUMP DONE / SQUARE DONE / SQUARE LEARNED / PARAM / 错误）
-           各走各的处理。
+        1. 拉空 display_queue：可解析成 PidSample 的塞进实时绘图缓冲，
+           方形验证运行时同时保存其日志；其它文本直接写入日志。
         2. 拉空 status_queue：哨兵 __FINISHED__ 表示寻优结束，否则就是普通状态。
         3. 重绘 canvas。
         4. self.after(50, ...) 续约。"""
+        plot_needs_redraw = False
         while True:
             try:
                 line = self.link.display_queue.get_nowait()
@@ -1921,45 +2367,48 @@ class App(tk.Tk):
                 break
             sample = PidSample.parse(line)
             if sample is not None:
-                # 是 PID 帧：分类保存
+                # 是 PID 帧：保存最近 250 帧用于实时绘图。
                 self.plot_samples.append(sample)
                 # 只保留最近 250 帧，避免内存涨
                 self.plot_samples = self.plot_samples[-250:]
-                if self.dump_receiving:
-                    self.dump_samples.append(sample)
                 if self.square_running and sample.mode == "SQUARE":
                     self.square_samples.append(sample)
                 # 10 帧才走一次重绘
                 self.pid_display_divider = (self.pid_display_divider + 1) % 10
                 if self.pid_display_divider != 0:
                     continue
-            elif line == "DUMP DONE" and self.dump_receiving:
-                # 下位机告知 dump 全部回传完毕
-                self.dump_receiving = False
-                self._save_dump()
+                plot_needs_redraw = True
             elif self.square_running and (
                 line.startswith("SQUARE DONE")
                 or line.startswith("SQUARE ERROR")
+                or line.startswith("ERR SQUARE")
+                or line.startswith("HOST SQUARE ERROR")
             ):
-                # 方框自然结束 / 异常中止
                 self.square_running = False
-                self.square_button.configure(state=tk.NORMAL)
-                self._save_square_run(line)
+                self._set_tune_buttons(True)
+                if self.square_samples:
+                    self._save_square_run(line)
+                else:
+                    self.status_var.set(line)
             elif line.startswith("SQUARE LEARNED,TURNDIST,"):
-                # 下位机把推荐转弯里程自动写回 UI
                 try:
-                    learned = int(line.rsplit(",", 1)[1])
-                    self.turn_distance_var.set(learned)
+                    self.turn_distance_var.set(int(line.rsplit(",", 1)[1]))
                 except ValueError:
                     pass
             elif line.startswith("PARAM,"):
-                # 下位机发当前参数快照：同步到 UI
                 self._apply_parameter_report(line)
             elif line.startswith("SERIAL ERROR:"):
                 # 串口挂了：自动关闭 UI 连接状态
                 self.link.close(send_stop=False)
                 self.connection_var.set("未连接")
                 self.connect_button.configure(text="连接")
+            if self.tuner.running and line.startswith((
+                "TO,", "TS,", "TA,", "TP,", "TE,", "SA,", "SV,", "SQ,",
+                "KA,", "LT,", "TUNE PENDING", "TEST START,STEP", "OK PWM,",
+            )):
+                # 自动整定只显示上位机阶段状态；协议帧仍留在 data_queue
+                # 给算法使用，不把结果行和 ACK 刷满日志框。
+                continue
             self._append_log(line)
 
         while True:
@@ -1969,18 +2418,20 @@ class App(tk.Tk):
                 break
             if status == "__FINISHED__":
                 self._set_tune_buttons(True)
-                self.status_var.set("Autotune finished")
             else:
                 self.status_var.set(status)
                 self._append_log(status)
 
-        self._draw_plot()
+        if plot_needs_redraw:
+            self._draw_plot()
         self.after(50, self._poll_queues)
 
     def _append_log(self, text: str) -> None:
         """往 Text 日志框追加一行并滚到底。"""
+        self.log.configure(state=tk.NORMAL)
         self.log.insert(tk.END, text + "\n")
         self.log.see(tk.END)
+        self.log.configure(state=tk.DISABLED)
 
     def _draw_plot(self) -> None:
         """用 plot_samples 在 canvas 上重画 4 条折线：左/右 target 和 speed。"""

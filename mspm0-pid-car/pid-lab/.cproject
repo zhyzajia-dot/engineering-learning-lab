@@ -103,6 +103,10 @@
                     </folderInfo>
                     <sourceEntries>
                         <entry excluding="ESP8266_BRIDGE" flags="VALUE_WORKSPACE_PATH|RESOLVED" kind="sourcePath" name=""/>
+                        <entry flags="VALUE_WORKSPACE_PATH|RESOLVED" kind="sourcePath" name="ESP8266_BRIDGE/.pio/build/pc_bridge/FrameworkArduino/umm_malloc"/>
+                        <entry flags="VALUE_WORKSPACE_PATH|RESOLVED" kind="sourcePath" name="ESP8266_BRIDGE/.pio/build/pc_bridge/FrameworkArduino/spiffs"/>
+                        <entry flags="VALUE_WORKSPACE_PATH|RESOLVED" kind="sourcePath" name="ESP8266_BRIDGE/.pio/build/pc_bridge/FrameworkArduino/libb64"/>
+                        <entry flags="VALUE_WORKSPACE_PATH|RESOLVED" kind="sourcePath" name="ESP8266_BRIDGE/.pio/build/car_bridge"/>
                     </sourceEntries>
                 </configuration>
             </storageModule>

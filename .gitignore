@@ -45,3 +45,10 @@ logs/
 !mspm0-pid-car/pid-lab/HOST/logs/
 !mspm0-pid-car/pid-lab/HOST/logs/**
 !mspm0-pid-car/pid-lab/HOST/logs/**/*.log
+
+# Ignore generated MSPM0 tuning sessions; add a specific useful trace with -f.
+mspm0-pid-car/pid-lab/HOST/logs/20*/
+mspm0-pid-car/pid-lab/HOST/logs/line_20*/
+mspm0-pid-car/pid-lab/HOST/logs/square_20*/
+mspm0-pid-car/pid-lab/HOST/logs/straight_20*/
+mspm0-pid-car/pid-lab/tmp/

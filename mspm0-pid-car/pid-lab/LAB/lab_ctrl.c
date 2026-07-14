@@ -28,8 +28,9 @@
 /* 命令行解析时单条命令允许的最大 token 数 */
 #define LAB_LINE_SIZE               64U
 
-/* 开环 PWM 模式下的占空比上限（小于闭环上限 500） */
-#define LAB_PWM_OPEN_LIMIT          300
+/* 开环 PWM 与电机输出模块使用相同上限。PWM 周期为 1000，300 只有 30%
+ * 占空比，无法保证空载电机起转，因此不再人为截到 300。 */
+#define LAB_PWM_OPEN_LIMIT          620
 /* 闭环 PI 输出占空比上限（绝对值） */
 #define LAB_PWM_CLOSED_LIMIT        500
 
@@ -38,9 +39,24 @@
 
 /* 数据流式发送周期 / 离线日志采样周期 */
 #define LAB_STREAM_PERIOD_MS         20U
+/* 自动轮速整定在主控本地采样；无线端只接收最终汇总，避免 ESP-NOW
+ * 对实时 CSV 的排队延迟影响参数选择。 */
+#define LAB_TUNE_SAMPLE_PERIOD_MS    20U
 
 /* PI 控制器外环周期（与 ENCODER 测速一致），用于把误差换算成“误差毫秒” */
 #define LAB_CONTROL_PERIOD_MS        10
+
+/* PC 端只接受相同版本的可靠事务协议，避免新旧固件混用后静默失控。 */
+#define LAB_PROTOCOL_VERSION          2
+
+/* 悬空轮速辨识的硬件保护阈值。正常工作区约 80~600 mm/s；达到此值说明
+ * 扫描已经远离有效工作区或编码器标定异常，固件会立即结束该测试点。 */
+#define LAB_TUNE_OPEN_STOP_MMPS    1800
+#define LAB_TUNE_STEP_STOP_MMPS     900
+
+#define LAB_TUNE_FLAG_OVERSPEED    0x01U
+#define LAB_TUNE_FLAG_CLIPPED      0x02U
+#define LAB_TOKEN_MAX       2147483647L
 
 /* PI 积分累加的限幅，避免积分饱和 */
 #define LAB_INTEGRAL_LIMIT_MS    500000L
@@ -67,10 +83,7 @@
 
 /* 按键消抖时间 */
 #define LAB_KEY_DEBOUNCE_MS          25U
-/* 脱机方框长按确认时间 */
-#define LAB_KEY_LONG_PRESS_MS      1200U
-
-/* ARM 后等待按 SET 键启动的延迟 */
+/* ARM 或脱机方框按 SW3 后的安全启动延迟 */
 #define LAB_ARM_START_DELAY_MS      2000U
 
 /* 闭环启动时的速度斜坡时间，避免瞬时阶跃 */
@@ -137,7 +150,7 @@
 #define LAB_STANDALONE_SQUARE_SPEED       300
 /* 上位机可指定的最大方框圈数 */
 #define LAB_SQUARE_MAX_LAPS             10U
-#define LAB_STANDALONE_MAX_LAPS          5U
+#define LAB_STANDALONE_MAX_LAPS LAB_SQUARE_MAX_LAPS
 
 /* Flash 烧写区地址（最后一页附近） */
 #define LAB_FLASH_ADDRESS       0x0001FC00U
@@ -246,6 +259,33 @@ typedef struct {
     int16_t countDiff;
 } LabLogSample_t;
 
+typedef enum {
+    LAB_TUNE_NONE = 0,
+    LAB_TUNE_OPEN,
+    LAB_TUNE_STEP
+} LabTuneKind_t;
+
+typedef struct {
+    LabTuneKind_t kind;
+    char wheel;
+    int16_t commandValue;
+    int16_t targetSpeed;
+    uint32_t startMs;
+    uint32_t durationMs;
+    uint32_t nextSampleMs;
+    uint16_t sampleCount;
+    uint16_t tailCount;
+    uint16_t saturationCount;
+    uint32_t token;
+    uint32_t riseTimeMs;
+    int16_t maxSpeed;
+    int64_t sumSpeed;
+    int64_t sumAbsError;
+    int64_t tailSum;
+    int64_t tailSquareSum;
+    uint8_t flags;
+} LabTuneMetrics_t;
+
 /* ===============================================================
  * 静态变量
  * =============================================================== */
@@ -337,6 +377,7 @@ static int16_t g_cornerMinEdgeMm = LAB_EDGE_MIN_INITIAL_MM;
  * =============================================================== */
 
 static uint8_t g_streamEnabled = 0U;           /* 是否周期发送 PID 流 */
+static uint8_t g_compactTuneStream = 0U;       /* 循迹整定专用短遥测 */
 static uint32_t g_modeStartMs = 0U;             /* 当前模式开始时间 */
 static uint32_t g_modeDurationMs = 0U;          /* 当前模式计划持续时间 */
 static uint32_t g_lastMotorCommandMs = 0U;      /* 开环 PWM 最近一次命令时间（用于超时） */
@@ -350,8 +391,21 @@ static uint16_t g_runLogCount = 0U;             /* 当前已写入条数 */
 static uint16_t g_dumpIndex = 0U;               /* DUMP 当前发送到的下标 */
 static uint8_t g_captureLog = 0U;               /* 是否正在记录离线日志 */
 static uint8_t g_dumpActive = 0U;               /* 是否正在回放日志 */
+static LabTuneMetrics_t g_tuneMetrics;
+static LabTuneMetrics_t g_lastTuneResult;
+static uint8_t g_lastTuneResultValid = 0U;
+/* SAVE token 的结果缓存使 ACK 丢失后的重发不会再次擦写 Flash。 */
+static uint32_t g_lastSaveToken = 0U;
+static uint8_t g_lastSaveTokenValid = 0U;
+static uint8_t g_lastSaveSucceeded = 0U;
+/* SQUARE 启动也做幂等缓存，ACK 丢失后的相同 token 不会让小车重新起跑。 */
+static uint32_t g_lastSquareToken = 0U;
+static uint8_t g_lastSquareTokenValid = 0U;
+static uint8_t g_lastSquareAccepted = 0U;
+static uint32_t g_lastKickToken = 0U;
+static uint8_t g_lastKickTokenValid = 0U;
 
-/* ARM 状态：等待 SET 键启动一次离线测试 */
+/* ARM 状态：等待 SW3 启动一次离线测试 */
 static uint8_t g_straightArmed = 0U;
 static uint8_t g_startPending = 0U;
 /* 脱机（不接 USB）独立跑方框的待启动标志 */
@@ -360,15 +414,16 @@ static int16_t g_armedSpeed = 0;
 static uint32_t g_armedDurationMs = 0U;
 static uint32_t g_pendingStartMs = 0U;
 
-/* 按键消抖相关 */
-static uint8_t g_keyRawLast = 0U;
-static uint8_t g_keyStable = 0U;
-static uint8_t g_keyLastStable = 0U;
-static uint16_t g_keySameMs = 0U;
+/* 三个独立按键的消抖状态：SW1 减圈、SW2 加圈、SW3 启停。 */
+typedef struct {
+    uint8_t rawLast;
+    uint8_t stable;
+    uint8_t lastStable;
+    uint16_t sameMs;
+} LabKeyState_t;
+
+static LabKeyState_t g_keys[3];
 static uint32_t g_lastKeySampleMs = 0U;
-static uint32_t g_keyPressStartMs = 0U;
-static uint8_t g_keyPressActive = 0U;
-static uint8_t g_keyLongReady = 0U;
 static uint8_t g_selectedSquareLaps = 1U;
 
 static uint8_t is_space(char c)
@@ -648,8 +703,8 @@ static uint8_t flash_values_valid_v1(const LabFlashConfigV1_t *config)
         (config->rightKiX1000 > 3000) ||
         (config->leftFfX1000 > 1000) ||
         (config->rightFfX1000 > 1000) ||
-        (config->leftMinPwm > 200) ||
-        (config->rightMinPwm > 200) ||
+        (config->leftMinPwm > 450) ||
+        (config->rightMinPwm > 450) ||
         (config->syncKpX1000 > 5000) ||
         (config->rightBiasMmps < -80) ||
         (config->rightBiasMmps > 80)) {
@@ -1033,7 +1088,7 @@ static void send_help(void)
     /* 给上位机打印命令帮助信息 */
     SERIAL_SendString("PING | STOP | STATUS | SENSOR | IMU | PARAM | SAVE | LOAD | DUMP\r\n");
     SERIAL_SendString("PWM L/R/B pwm | STEP L/R speed ms | RUN/LINE speed ms | SQUARE speed laps | KICK mmps ms\r\n");
-    SERIAL_SendString("ARM speed ms: press SET key later to start untethered RUN\r\n");
+    SERIAL_SendString("ARM speed ms: press SW3 later to start untethered RUN\r\n");
     SERIAL_SendString("SET LKP/LKI/RKP/RKI/LFF/RFF/LMIN/RMIN/SYNC/BIAS/LINEKP/LINEKD/TURNANGLE/TURNFAST/TURNSLOW/TURNMARGIN/TURNEXIT/TURNDIST value\r\n");
 }
 
@@ -1103,6 +1158,8 @@ static void send_status(uint32_t nowMs)
     SERIAL_SendString((g_straightArmed != 0U) ? "ARMED" : "SAFE");
     SERIAL_SendString(",SELECTED_LAPS,");
     SERIAL_SendInt32(g_selectedSquareLaps);
+    SERIAL_SendString(",STBY,");
+    SERIAL_SendString((MOTOR_IsDriverEnabled() != 0U) ? "HIGH" : "LOW");
     SERIAL_SendString("\r\n");
 }
 
@@ -1140,6 +1197,24 @@ static void send_imu_status(void)
     SERIAL_SendString("\r\n");
 }
 
+/* 可靠协议握手。token 由 PC 随机生成，响应中原样返回；同时报告固件真正
+ * 使用的编码器量纲，避免把旧固件或错误标定当成可用调参环境。 */
+static void send_protocol_hello(uint32_t token)
+{
+    if (SERIAL_TxCanAccept(100U) == 0U) return;
+    SERIAL_SendString("HELLO,");
+    SERIAL_SendInt32(token);
+    SERIAL_SendString(",");
+    SERIAL_SendInt32(LAB_PROTOCOL_VERSION);
+    SERIAL_SendString(",STBY,");
+    SERIAL_SendString((MOTOR_IsDriverEnabled() != 0U) ? "HIGH" : "LOW");
+    SERIAL_SendString(",ENCODER_MM_X1000,");
+    SERIAL_SendInt32(ENCODER_GetMmPerCountX1000());
+    SERIAL_SendString(",SAMPLE_MS,");
+    SERIAL_SendInt32(ENCODER_GetSamplePeriodMs());
+    SERIAL_SendString("\r\n");
+}
+
 static void send_pid_header(void)
 {
     /* 流式日志 / 离线日志共用的 CSV 表头 */
@@ -1150,6 +1225,12 @@ static void send_stream_sample(uint32_t nowMs)
 {
     /* 周期输出当前状态一行。
      * elapsed 是相对当前模式开始的时间；IDLE 时强制 0 方便画图。 */
+    /* 一帧 PID 日志最多约 180 字节。空间不够就整帧跳过，绝不从中间
+     * 丢字节，否则无线端会把半条 PID 与下一条文本粘成乱码。 */
+    if (SERIAL_TxCanAccept(220U) == 0U) {
+        return;
+    }
+
     int16_t leftSpeed = ENCODER_GetLeftSpeed();
     int16_t rightSpeed = ENCODER_GetRightSpeed();
     int32_t elapsed =
@@ -1177,6 +1258,37 @@ static void send_stream_sample(uint32_t nowMs)
     SERIAL_SendInt32((int32_t)g_rightTarget - rightSpeed);
     SERIAL_SendString(",");
     SERIAL_SendInt32(ENCODER_GetLeftCount() - ENCODER_GetRightCount());
+    SERIAL_SendString(",");
+    SERIAL_SendInt32(g_lineError);
+    SERIAL_SendString(",");
+    SERIAL_SendInt32(g_lineMask);
+    SERIAL_SendString(",");
+    SERIAL_SendInt32(g_lineValid);
+    SERIAL_SendString(",");
+    SERIAL_SendInt32(g_turnYawX10);
+    SERIAL_SendString(",");
+    SERIAL_SendInt32(g_squareCornerCount);
+    SERIAL_SendString(",");
+    SERIAL_SendInt32(g_squareState);
+    SERIAL_SendString(",");
+    SERIAL_SendInt32(g_turnTravelMm);
+    SERIAL_SendString("\r\n");
+}
+
+/* 循迹自动整定只需要这些字段。完整 PID 行有 19 列，在 50 Hz 下会把
+ * UART->ESP-NOW 桥拆成大量小包；短帧保留评分、转弯和安全检查所需数据。 */
+static void send_compact_tune_sample(uint32_t nowMs)
+{
+    SERIAL_SendString("LT,");
+    SERIAL_SendInt32((int32_t)(nowMs - g_modeStartMs));
+    SERIAL_SendString(",");
+    SERIAL_SendInt32(g_leftTarget);
+    SERIAL_SendString(",");
+    SERIAL_SendInt32(g_rightTarget);
+    SERIAL_SendString(",");
+    SERIAL_SendInt32(ENCODER_GetLeftSpeed());
+    SERIAL_SendString(",");
+    SERIAL_SendInt32(ENCODER_GetRightSpeed());
     SERIAL_SendString(",");
     SERIAL_SendInt32(g_lineError);
     SERIAL_SendString(",");
@@ -1287,15 +1399,26 @@ static void update_dump(uint32_t nowMs)
     }
 }
 
+static void start_closed_test(LabMode_t mode, int16_t speed,
+                              uint32_t durationMs, uint32_t nowMs,
+                              uint8_t liveStream, uint8_t captureLog);
+
 static void apply_open_pwm(char wheel, int16_t pwm, uint32_t nowMs)
 {
     /* 启动开环 PWM 模式：
      *   L = 只动左轮，R = 只动右轮，B = 两轮同向
-     * 进入模式前先 stop_motors() 清理状态 */
-    stop_motors();
+     * 首次进入模式时先 stop_motors() 清理状态；上位机为保持
+     * 测试而续发同一命令时不先停车，避免 PWM 波形出现周期性断点。 */
+    if (g_mode != LAB_MODE_OPEN_PWM) {
+        stop_motors();
+    }
     g_straightArmed = 0U;
     g_startPending = 0U;
     g_mode = LAB_MODE_OPEN_PWM;
+
+    /* 每条命令都先清两轮逻辑值，切换 L/R/B 时不会遗留上一路 PWM。 */
+    g_leftPwm = 0;
+    g_rightPwm = 0;
 
     if (wheel == 'L') {
         g_leftPwm = pwm;
@@ -1309,7 +1432,204 @@ static void apply_open_pwm(char wheel, int16_t pwm, uint32_t nowMs)
     g_modeStartMs = nowMs;
     g_lastMotorCommandMs = nowMs;
     MOTOR_SetPWM(g_leftPwm, g_rightPwm);
-    SERIAL_SendString("OK PWM\r\n");
+    SERIAL_SendString("OK PWM,STBY,");
+    SERIAL_SendString((MOTOR_IsDriverEnabled() != 0U) ? "HIGH" : "LOW");
+    SERIAL_SendString("\r\n");
+}
+
+static void start_tune_metrics(LabTuneKind_t kind, char wheel,
+                               int16_t commandValue, int16_t targetSpeed,
+                               uint32_t durationMs, uint32_t token,
+                               uint32_t nowMs)
+{
+    /* 新测试一启动就使旧结果失效；TUNEGET 只可能取回本轮完成的数据。 */
+    g_lastTuneResultValid = 0U;
+    g_tuneMetrics.kind = kind;
+    g_tuneMetrics.wheel = wheel;
+    g_tuneMetrics.commandValue = commandValue;
+    g_tuneMetrics.targetSpeed = targetSpeed;
+    g_tuneMetrics.startMs = nowMs;
+    g_tuneMetrics.durationMs = durationMs;
+    g_tuneMetrics.nextSampleMs = nowMs;
+    g_tuneMetrics.sampleCount = 0U;
+    g_tuneMetrics.tailCount = 0U;
+    g_tuneMetrics.saturationCount = 0U;
+    g_tuneMetrics.token = token;
+    g_tuneMetrics.riseTimeMs = durationMs;
+    g_tuneMetrics.maxSpeed = 0;
+    g_tuneMetrics.sumSpeed = 0;
+    g_tuneMetrics.sumAbsError = 0;
+    g_tuneMetrics.tailSum = 0;
+    g_tuneMetrics.tailSquareSum = 0;
+    g_tuneMetrics.flags = 0U;
+}
+
+static void start_tune_open(char wheel, int16_t pwm, uint32_t durationMs,
+                            uint32_t token, uint32_t nowMs)
+{
+    apply_open_pwm(wheel, pwm, nowMs);
+    g_streamEnabled = 0U;
+    g_compactTuneStream = 0U;
+    start_tune_metrics(LAB_TUNE_OPEN, wheel, pwm, 0, durationMs, token, nowMs);
+}
+
+static void start_tune_step(char wheel, int16_t speed, uint32_t durationMs,
+                            uint32_t token, uint32_t nowMs)
+{
+    g_compactTuneStream = 0U;
+    start_closed_test((wheel == 'L') ? LAB_MODE_STEP_LEFT :
+                      LAB_MODE_STEP_RIGHT, speed, durationMs, nowMs,
+                      0U, 0U);
+    start_tune_metrics(LAB_TUNE_STEP, wheel, 0, speed, durationMs, token, nowMs);
+}
+
+static void send_tune_open_result(const LabTuneMetrics_t *result)
+{
+    int32_t average = 0;
+    if (SERIAL_TxCanAccept(100U) == 0U) return;
+    if (result->sampleCount != 0U) {
+        average = (int32_t)(result->sumSpeed / result->sampleCount);
+    }
+    SERIAL_SendString("TO,");
+    SERIAL_SendInt32(result->token);
+    SERIAL_SendString(",");
+    SERIAL_SendString((result->wheel == 'L') ? "L," : "R,");
+    SERIAL_SendInt32(result->commandValue);
+    SERIAL_SendString(",");
+    SERIAL_SendInt32(average);
+    SERIAL_SendString(",");
+    SERIAL_SendInt32(result->sampleCount);
+    SERIAL_SendString(",");
+    SERIAL_SendInt32(result->maxSpeed);
+    SERIAL_SendString(",");
+    SERIAL_SendInt32(result->flags);
+    SERIAL_SendString("\r\n");
+}
+
+static void send_tune_step_result(const LabTuneMetrics_t *result)
+{
+    if (SERIAL_TxCanAccept(160U) == 0U) return;
+    SERIAL_SendString("TS,");
+    SERIAL_SendInt32(result->token);
+    SERIAL_SendString(",");
+    SERIAL_SendString((result->wheel == 'L') ? "L," : "R,");
+    SERIAL_SendInt32(result->sampleCount);
+    SERIAL_SendString(",");
+    SERIAL_SendInt32((int32_t)result->sumAbsError);
+    SERIAL_SendString(",");
+    SERIAL_SendInt32(result->maxSpeed);
+    SERIAL_SendString(",");
+    SERIAL_SendInt32(result->tailCount);
+    SERIAL_SendString(",");
+    SERIAL_SendInt32((int32_t)result->tailSum);
+    SERIAL_SendString(",");
+    SERIAL_SendInt32((int32_t)result->tailSquareSum);
+    SERIAL_SendString(",");
+    SERIAL_SendInt32((int32_t)result->riseTimeMs);
+    SERIAL_SendString(",");
+    SERIAL_SendInt32(result->saturationCount);
+    SERIAL_SendString(",");
+    SERIAL_SendInt32(result->flags);
+    SERIAL_SendString("\r\n");
+}
+
+static void send_tune_ack(const LabTuneMetrics_t *request)
+{
+    if (SERIAL_TxCanAccept(64U) == 0U) return;
+    SERIAL_SendString("TA,");
+    SERIAL_SendInt32(request->token);
+    SERIAL_SendString(",");
+    SERIAL_SendString((request->kind == LAB_TUNE_OPEN) ? "O," : "S,");
+    SERIAL_SendString((request->wheel == 'L') ? "L\r\n" : "R\r\n");
+}
+
+static uint8_t tune_request_matches(const LabTuneMetrics_t *request,
+                                    LabTuneKind_t kind, char wheel,
+                                    uint32_t token)
+{
+    return ((request->kind == kind) && (request->wheel == wheel) &&
+            (request->token == token)) ? 1U : 0U;
+}
+
+static void send_tune_error(uint32_t token, const char *reason)
+{
+    if (SERIAL_TxCanAccept(64U) == 0U) return;
+    SERIAL_SendString("TE,");
+    SERIAL_SendInt32(token);
+    SERIAL_SendString(",");
+    SERIAL_SendString(reason);
+    SERIAL_SendString("\r\n");
+}
+
+static void update_tune_metrics(uint32_t nowMs)
+{
+    uint32_t elapsed;
+    int16_t speed;
+    int16_t pwm;
+    uint8_t finished = 0U;
+
+    if (g_tuneMetrics.kind == LAB_TUNE_NONE) {
+        return;
+    }
+    elapsed = nowMs - g_tuneMetrics.startMs;
+    if (nowMs >= g_tuneMetrics.nextSampleMs) {
+        g_tuneMetrics.nextSampleMs = nowMs + LAB_TUNE_SAMPLE_PERIOD_MS;
+        speed = (g_tuneMetrics.wheel == 'L') ? ENCODER_GetLeftSpeed() :
+                                                ENCODER_GetRightSpeed();
+        pwm = (g_tuneMetrics.wheel == 'L') ? g_leftPwm : g_rightPwm;
+
+        if (abs_i16(speed) > g_tuneMetrics.maxSpeed) {
+            g_tuneMetrics.maxSpeed = abs_i16(speed);
+        }
+
+        if (g_tuneMetrics.kind == LAB_TUNE_OPEN) {
+            /* 前 700 ms 只让电机建立稳态，不计入前馈均值。 */
+            if (elapsed >= 700U) {
+                g_tuneMetrics.sumSpeed += abs_i16(speed);
+                g_tuneMetrics.sampleCount++;
+            }
+            if (abs_i16(speed) >= 2450) {
+                g_tuneMetrics.flags |= LAB_TUNE_FLAG_CLIPPED;
+            }
+            if (abs_i16(speed) >= LAB_TUNE_OPEN_STOP_MMPS) {
+                g_tuneMetrics.flags |= LAB_TUNE_FLAG_OVERSPEED;
+                finished = 1U;
+            }
+        } else {
+            int16_t error = (int16_t)(g_tuneMetrics.targetSpeed - speed);
+            g_tuneMetrics.sampleCount++;
+            g_tuneMetrics.sumAbsError += abs_i16(error);
+            if ((g_tuneMetrics.riseTimeMs == g_tuneMetrics.durationMs) &&
+                (speed >= (int16_t)((g_tuneMetrics.targetSpeed * 9) / 10))) {
+                g_tuneMetrics.riseTimeMs = elapsed;
+            }
+            if (pwm >= (LAB_PWM_CLOSED_LIMIT - 5)) {
+                g_tuneMetrics.saturationCount++;
+            }
+            if (elapsed >= ((g_tuneMetrics.durationMs * 3U) / 4U)) {
+                g_tuneMetrics.tailCount++;
+                g_tuneMetrics.tailSum += speed;
+                g_tuneMetrics.tailSquareSum += (int32_t)speed * speed;
+            }
+            if (abs_i16(speed) >= LAB_TUNE_STEP_STOP_MMPS) {
+                g_tuneMetrics.flags |= LAB_TUNE_FLAG_OVERSPEED;
+                finished = 1U;
+            }
+        }
+    }
+
+    if ((elapsed >= g_tuneMetrics.durationMs) || (finished != 0U)) {
+        LabTuneKind_t kind = g_tuneMetrics.kind;
+        g_lastTuneResult = g_tuneMetrics;
+        g_lastTuneResultValid = 1U;
+        g_tuneMetrics.kind = LAB_TUNE_NONE;
+        stop_motors();
+        if (kind == LAB_TUNE_OPEN) {
+            send_tune_open_result(&g_lastTuneResult);
+        } else {
+            send_tune_step_result(&g_lastTuneResult);
+        }
+    }
 }
 
 static void start_closed_test(LabMode_t mode, int16_t speed,
@@ -1357,7 +1677,9 @@ static void start_closed_test(LabMode_t mode, int16_t speed,
     SERIAL_SendString(",");
     SERIAL_SendInt32((int32_t)durationMs);
     SERIAL_SendString("\r\n");
-    send_pid_header();
+    if (liveStream != 0U) {
+        send_pid_header();
+    }
 }
 
 static uint8_t start_square_test(int16_t speed, uint8_t laps,
@@ -1414,7 +1736,9 @@ static uint8_t start_square_test(int16_t speed, uint8_t laps,
     SERIAL_SendString(",");
     SERIAL_SendInt32(laps);
     SERIAL_SendString("\r\n");
-    send_pid_header();
+    if (g_compactTuneStream == 0U) {
+        send_pid_header();
+    }
     return 1U;
 }
 
@@ -1423,6 +1747,7 @@ static void square_abort(const char *reason)
     /* 方框模式异常中止：停机 + 关闭数据流 + 打印原因 */
     stop_motors();
     g_streamEnabled = 0U;
+    g_compactTuneStream = 0U;
     SERIAL_SendString("SQUARE ERROR,");
     SERIAL_SendString(reason);
     SERIAL_SendString("\r\n");
@@ -1489,6 +1814,7 @@ static uint8_t square_complete_corner(uint32_t nowMs)
         /* 圈数完成：停机并尝试把学习到的转弯里程写回 Flash */
         stop_motors();
         g_streamEnabled = 0U;
+        g_compactTuneStream = 0U;
         SERIAL_SendString("SQUARE LEARNED,TURNDIST,");
         SERIAL_SendInt32(g_turnDistanceMm);
         SERIAL_SendString("\r\n");
@@ -1541,10 +1867,10 @@ static uint8_t set_parameter(const char *name, int32_t value)
         if ((value < 0) || (value > 1000)) return 0U;
         g_rightPi.ffX1000 = value;
     } else if (text_equal(name, "LMIN") != 0U) {
-        if ((value < 0) || (value > 200)) return 0U;
+        if ((value < 0) || (value > 450)) return 0U;
         g_leftPi.minPwm = (int16_t)value;
     } else if (text_equal(name, "RMIN") != 0U) {
-        if ((value < 0) || (value > 200)) return 0U;
+        if ((value < 0) || (value > 450)) return 0U;
         g_rightPi.minPwm = (int16_t)value;
     } else if (text_equal(name, "SYNC") != 0U) {
         if ((value < 0) || (value > 5000)) return 0U;
@@ -1587,6 +1913,98 @@ static uint8_t set_parameter(const char *name, int32_t value)
     return 1U;
 }
 
+static void start_or_repeat_tune_open(char wheel, int16_t pwm,
+                                      uint32_t durationMs, uint32_t token,
+                                      uint32_t nowMs)
+{
+    if (g_tuneMetrics.kind != LAB_TUNE_NONE) {
+        if (tune_request_matches(&g_tuneMetrics, LAB_TUNE_OPEN,
+                                 wheel, token) != 0U) {
+            send_tune_ack(&g_tuneMetrics);
+        } else {
+            send_tune_error(token, "BUSY");
+        }
+        return;
+    }
+
+    if ((g_lastTuneResultValid != 0U) &&
+        (tune_request_matches(&g_lastTuneResult, LAB_TUNE_OPEN,
+                              wheel, token) != 0U)) {
+        send_tune_ack(&g_lastTuneResult);
+        send_tune_open_result(&g_lastTuneResult);
+        return;
+    }
+
+    start_tune_open(wheel, pwm, durationMs, token, nowMs);
+    send_tune_ack(&g_tuneMetrics);
+}
+
+static void start_or_repeat_tune_step(char wheel, int16_t speed,
+                                      uint32_t durationMs, uint32_t token,
+                                      uint32_t nowMs)
+{
+    if (g_tuneMetrics.kind != LAB_TUNE_NONE) {
+        if (tune_request_matches(&g_tuneMetrics, LAB_TUNE_STEP,
+                                 wheel, token) != 0U) {
+            send_tune_ack(&g_tuneMetrics);
+        } else {
+            send_tune_error(token, "BUSY");
+        }
+        return;
+    }
+
+    if ((g_lastTuneResultValid != 0U) &&
+        (tune_request_matches(&g_lastTuneResult, LAB_TUNE_STEP,
+                              wheel, token) != 0U)) {
+        send_tune_ack(&g_lastTuneResult);
+        send_tune_step_result(&g_lastTuneResult);
+        return;
+    }
+
+    start_tune_step(wheel, speed, durationMs, token, nowMs);
+    send_tune_ack(&g_tuneMetrics);
+}
+
+static void send_set_ack(uint32_t token, const char *name, int32_t value)
+{
+    if (SERIAL_TxCanAccept(80U) == 0U) return;
+    SERIAL_SendString("SA,");
+    SERIAL_SendInt32(token);
+    SERIAL_SendString(",");
+    SERIAL_SendString(name);
+    SERIAL_SendString(",");
+    SERIAL_SendInt32(value);
+    SERIAL_SendString("\r\n");
+}
+
+static void send_save_ack(uint32_t token, uint8_t succeeded)
+{
+    if (SERIAL_TxCanAccept(64U) == 0U) return;
+    SERIAL_SendString("SV,");
+    SERIAL_SendInt32(token);
+    SERIAL_SendString((succeeded != 0U) ? ",OK\r\n" : ",ERR\r\n");
+}
+
+static void send_square_ack(uint32_t token, const char *status)
+{
+    if (SERIAL_TxCanAccept(64U) == 0U) return;
+    SERIAL_SendString("SQ,");
+    SERIAL_SendInt32(token);
+    SERIAL_SendString(",");
+    SERIAL_SendString(status);
+    SERIAL_SendString("\r\n");
+}
+
+static void send_kick_ack(uint32_t token, const char *status)
+{
+    if (SERIAL_TxCanAccept(64U) == 0U) return;
+    SERIAL_SendString("KA,");
+    SERIAL_SendInt32(token);
+    SERIAL_SendString(",");
+    SERIAL_SendString(status);
+    SERIAL_SendString("\r\n");
+}
+
 /* 解析一条完整 ASCII 命令并执行。命令在此处统一做大小写、空白、参数范围和
  * 模式安全检查；所有会驱动电机的命令最终仍通过受限的控制状态机下发。 */
 static void process_command(char *line, uint32_t nowMs)
@@ -1600,6 +2018,7 @@ static void process_command(char *line, uint32_t nowMs)
     uint8_t count;
     int32_t value1;
     int32_t value2;
+    int32_t value3;
 
     normalize_line(line);
     count = split_tokens(line, tokens, 5U);
@@ -1610,19 +2029,24 @@ static void process_command(char *line, uint32_t nowMs)
     /* ---- 基础状态/帮助命令 ---- */
     if ((count == 1U) && (text_equal(tokens[0], "PING") != 0U)) {
         SERIAL_SendString("PONG\r\n");
+    } else if ((count == 2U) &&
+               (text_equal(tokens[0], "HELLO") != 0U) &&
+               (parse_i32(tokens[1], &value1) != 0U) &&
+               (value1 >= 0) && (value1 <= LAB_TOKEN_MAX)) {
+        send_protocol_hello((uint32_t)value1);
     } else if ((count == 1U) && (text_equal(tokens[0], "HELP") != 0U)) {
         send_help();
     } else if ((count == 1U) && (text_equal(tokens[0], "STOP") != 0U)) {
         /* 强制停机并清空所有 ARM / 离线日志 / 流状态 */
+        g_tuneMetrics.kind = LAB_TUNE_NONE;
         stop_motors();
         g_streamEnabled = 0U;
+        g_compactTuneStream = 0U;
         g_captureLog = 0U;
         g_dumpActive = 0U;
         g_straightArmed = 0U;
         g_startPending = 0U;
         g_squareStartPending = 0U;
-        g_keyPressActive = 0U;
-        g_keyLongReady = 0U;
         SERIAL_SendString("OK STOP\r\n");
     } else if ((count == 1U) && (text_equal(tokens[0], "STATUS") != 0U)) {
         send_status(nowMs);
@@ -1632,6 +2056,22 @@ static void process_command(char *line, uint32_t nowMs)
         send_imu_status();
     } else if ((count == 1U) && (text_equal(tokens[0], "PARAM") != 0U)) {
         send_parameters();
+    } else if ((count == 2U) &&
+               (text_equal(tokens[0], "SAVE") != 0U) &&
+               (parse_i32(tokens[1], &value1) != 0U) &&
+               (value1 >= 0) && (value1 <= LAB_TOKEN_MAX) &&
+               (g_mode == LAB_MODE_IDLE)) {
+        uint32_t saveToken = (uint32_t)value1;
+        if ((g_lastSaveTokenValid != 0U) &&
+            (g_lastSaveToken == saveToken)) {
+            send_save_ack(saveToken, g_lastSaveSucceeded);
+        } else {
+            MOTOR_Stop();
+            g_lastSaveSucceeded = save_flash_parameters();
+            g_lastSaveToken = saveToken;
+            g_lastSaveTokenValid = 1U;
+            send_save_ack(saveToken, g_lastSaveSucceeded);
+        }
     } else if ((count == 1U) && (text_equal(tokens[0], "SAVE") != 0U) &&
                (g_mode == LAB_MODE_IDLE)) {
         /* 仅空闲时允许烧写 Flash，避免在电机运行时擦 Flash 出问题 */
@@ -1657,14 +2097,68 @@ static void process_command(char *line, uint32_t nowMs)
                (text_equal(tokens[1], "ON") != 0U)) {
         /* 实时 PID 数据流 */
         g_streamEnabled = 1U;
+        g_compactTuneStream = 0U;
         g_lastStreamMs = nowMs;
         SERIAL_SendString("OK STREAM ON\r\n");
         send_pid_header();
     } else if ((count == 2U) &&
                (text_equal(tokens[0], "STREAM") != 0U) &&
+               (text_equal(tokens[1], "TUNE") != 0U)) {
+        /* 下一次 LINE/SQUARE 使用循迹整定短帧；此命令本身不启动电机。 */
+        g_streamEnabled = 0U;
+        g_compactTuneStream = 1U;
+        g_lastStreamMs = nowMs;
+        SERIAL_SendString("OK STREAM TUNE\r\n");
+    } else if ((count == 2U) &&
+               (text_equal(tokens[0], "STREAM") != 0U) &&
                (text_equal(tokens[1], "OFF") != 0U)) {
         g_streamEnabled = 0U;
+        g_compactTuneStream = 0U;
         SERIAL_SendString("OK STREAM OFF\r\n");
+    } else if ((count == 2U) &&
+               (text_equal(tokens[0], "TUNEGET") != 0U)) {
+        /* 结果帧未到达上位机时可重复读取；不会重新启动电机或修改参数。 */
+        if ((parse_i32(tokens[1], &value1) == 0U) ||
+            (value1 < 0) || (value1 > LAB_TOKEN_MAX)) {
+            SERIAL_SendString("ERR TUNE TOKEN\r\n");
+        } else if ((g_tuneMetrics.kind != LAB_TUNE_NONE) &&
+                   ((uint32_t)value1 == g_tuneMetrics.token)) {
+            SERIAL_SendString("TP,");
+            SERIAL_SendInt32(value1);
+            SERIAL_SendString("\r\n");
+        } else if ((g_lastTuneResultValid == 0U) ||
+                   ((uint32_t)value1 != g_lastTuneResult.token)) {
+            send_tune_error((uint32_t)value1, "UNKNOWN");
+        } else if (g_lastTuneResult.kind == LAB_TUNE_OPEN) {
+            send_tune_open_result(&g_lastTuneResult);
+        } else if (g_lastTuneResult.kind == LAB_TUNE_STEP) {
+            send_tune_step_result(&g_lastTuneResult);
+        } else {
+            SERIAL_SendString("TUNE PENDING\r\n");
+        }
+    } else if ((count == 4U) &&
+               (text_equal(tokens[0], "KICK") != 0U) &&
+               (parse_i32(tokens[1], &value1) != 0U) &&
+               (parse_i32(tokens[2], &value2) != 0U) &&
+               (parse_i32(tokens[3], &value3) != 0U) &&
+               (value1 >= -60) && (value1 <= 60) &&
+               (value2 >= 50) && (value2 <= 400) &&
+               (value3 >= 0) && (value3 <= LAB_TOKEN_MAX)) {
+        uint32_t kickToken = (uint32_t)value3;
+        if ((g_lastKickTokenValid != 0U) &&
+            (g_lastKickToken == kickToken)) {
+            send_kick_ack(kickToken, "OK");
+        } else if ((g_mode == LAB_MODE_LINE) ||
+                   ((g_mode == LAB_MODE_SQUARE) &&
+                    (g_squareState == SQUARE_STATE_LINE))) {
+            g_lineKickMmps = (int16_t)value1;
+            g_lineKickEndMs = nowMs + (uint32_t)value2;
+            g_lastKickToken = kickToken;
+            g_lastKickTokenValid = 1U;
+            send_kick_ack(kickToken, "OK");
+        } else {
+            send_kick_ack(kickToken, "ERR");
+        }
     } else if ((count == 3U) &&
                (text_equal(tokens[0], "KICK") != 0U) &&
                (parse_i32(tokens[1], &value1) != 0U) &&
@@ -1686,7 +2180,44 @@ static void process_command(char *line, uint32_t nowMs)
                 (text_equal(tokens[1], "R") != 0U) ||
                 (text_equal(tokens[1], "B") != 0U))) {
         /* 开环 PWM：L/R/B 选轮 */
+        g_tuneMetrics.kind = LAB_TUNE_NONE;
         apply_open_pwm(tokens[1][0], (int16_t)value1, nowMs);
+    } else if ((count == 5U) &&
+               (text_equal(tokens[0], "TUNEOPEN") != 0U) &&
+               ((text_equal(tokens[1], "L") != 0U) ||
+                (text_equal(tokens[1], "R") != 0U)) &&
+               (parse_i32(tokens[2], &value1) != 0U) &&
+               (parse_i32(tokens[3], &value2) != 0U) &&
+               (parse_i32(tokens[4], &value3) != 0U) &&
+               (value1 >= 0) && (value1 <= LAB_PWM_OPEN_LIMIT) &&
+               (value2 >= 1000) && (value2 <= LAB_OPEN_TIMEOUT_MS) &&
+               (value3 >= 0) && (value3 <= LAB_TOKEN_MAX)) {
+        /* 静默开环辨识：本地取稳态均值，只回传一条 TUNE,OPEN 结果。 */
+        start_or_repeat_tune_open(tokens[1][0], (int16_t)value1,
+                                  (uint32_t)value2, (uint32_t)value3, nowMs);
+    } else if ((count == 5U) &&
+               (text_equal(tokens[0], "TUNESTEP") != 0U) &&
+               ((text_equal(tokens[1], "L") != 0U) ||
+                (text_equal(tokens[1], "R") != 0U)) &&
+               (parse_i32(tokens[2], &value1) != 0U) &&
+               (parse_i32(tokens[3], &value2) != 0U) &&
+               (parse_i32(tokens[4], &value3) != 0U) &&
+               (value1 >= LAB_SPEED_MIN_MMPS) &&
+               (value1 <= LAB_SPEED_MAX_MMPS) &&
+               (value2 >= LAB_TEST_MIN_MS) &&
+               (value2 <= LAB_TEST_MAX_MS) &&
+               (value3 >= 0) && (value3 <= LAB_TOKEN_MAX)) {
+        /* 静默闭环阶跃：本地统计误差、超调、稳态波动和饱和比例。 */
+        start_or_repeat_tune_step(tokens[1][0], (int16_t)value1,
+                                  (uint32_t)value2, (uint32_t)value3, nowMs);
+    } else if ((count == 4U) &&
+               (text_equal(tokens[0], "SET") != 0U) &&
+               (parse_i32(tokens[2], &value1) != 0U) &&
+               (parse_i32(tokens[3], &value2) != 0U) &&
+               (value2 >= 0) && (value2 <= LAB_TOKEN_MAX) &&
+               (set_parameter(tokens[1], value1) != 0U)) {
+        /* 带 token 的 SET 不再附带整行 PARAM，避免每次候选切换都制造拥塞。 */
+        send_set_ack((uint32_t)value2, tokens[1], value1);
     } else if ((count == 3U) &&
                (text_equal(tokens[0], "SET") != 0U) &&
                (parse_i32(tokens[2], &value1) != 0U) &&
@@ -1705,6 +2236,7 @@ static void process_command(char *line, uint32_t nowMs)
                (value2 >= LAB_TEST_MIN_MS) &&
                (value2 <= LAB_TEST_MAX_MS)) {
         /* 单轮阶跃响应测试 */
+        g_tuneMetrics.kind = LAB_TUNE_NONE;
         start_closed_test((tokens[1][0] == 'L') ?
                           LAB_MODE_STEP_LEFT : LAB_MODE_STEP_RIGHT,
                           (int16_t)value1, (uint32_t)value2, nowMs,
@@ -1723,6 +2255,30 @@ static void process_command(char *line, uint32_t nowMs)
                               LAB_MODE_LINE : LAB_MODE_STRAIGHT,
                           (int16_t)value1,
                           (uint32_t)value2, nowMs, 1U, 0U);
+    } else if ((count == 4U) &&
+               (text_equal(tokens[0], "SQUARE") != 0U) &&
+               (parse_i32(tokens[1], &value1) != 0U) &&
+               (parse_i32(tokens[2], &value2) != 0U) &&
+               (parse_i32(tokens[3], &value3) != 0U) &&
+               (value1 >= LAB_SPEED_MIN_MMPS) &&
+               (value1 <= LAB_SQUARE_MAX_SPEED_MMPS) &&
+               (value2 >= 1) && (value2 <= LAB_SQUARE_MAX_LAPS) &&
+               (value3 >= 0) && (value3 <= LAB_TOKEN_MAX)) {
+        uint32_t squareToken = (uint32_t)value3;
+        if ((g_lastSquareTokenValid != 0U) &&
+            (g_lastSquareToken == squareToken)) {
+            send_square_ack(squareToken,
+                            (g_lastSquareAccepted != 0U) ? "OK" : "ERR");
+        } else if (g_mode != LAB_MODE_IDLE) {
+            send_square_ack(squareToken, "BUSY");
+        } else {
+            g_lastSquareAccepted = start_square_test(
+                (int16_t)value1, (uint8_t)value2, nowMs);
+            g_lastSquareToken = squareToken;
+            g_lastSquareTokenValid = 1U;
+            send_square_ack(squareToken,
+                            (g_lastSquareAccepted != 0U) ? "OK" : "ERR");
+        }
     } else if ((count == 3U) &&
                (text_equal(tokens[0], "SQUARE") != 0U) &&
                (parse_i32(tokens[1], &value1) != 0U) &&
@@ -1753,15 +2309,15 @@ static void process_command(char *line, uint32_t nowMs)
         g_startPending = 0U;
         g_streamEnabled = 0U;
         g_captureLog = 0U;
-        SERIAL_SendString("ARMED: DISCONNECT TTL, PLACE CAR, PRESS SET\r\n");
+        SERIAL_SendString("ARMED: DISCONNECT TTL, PLACE CAR, PRESS SW3\r\n");
     } else {
         SERIAL_SendString("ERR COMMAND; SEND HELP\r\n");
     }
 }
 
 /* 方框左转子状态机：依次执行前探、IMU 相对 yaw 清零、快速原地转、减速转向、
- * 停稳并以灰度重新捕线。转角完成条件为“捕线 / 编码器行程 / IMU 角度”之一，
- * 但必须先达到最小转向时间；超时、IMU 长期失效或未捕线均中止本次方框。 */
+ * 停稳并以灰度重新捕线。IMU 可靠时只允许“捕线 / 达到目标角”结束；编码器
+ * 行程仅在 yaw 野点失去可信度后作为后备，避免错误里程提前结束一个正常转弯。 */
 static uint8_t square_service_turn(uint32_t nowMs)
 {
     /* 方框模式下的转弯子状态机，由 update_closed_loop() 周期性调用。
@@ -1878,14 +2434,16 @@ static uint8_t square_service_turn(uint32_t nowMs)
 
     /* 满足以下任一条件就结束本次转弯：
      *   - 至少经过最短时间
-     *   - 线重新出现 / 走够里程 / 偏航达到目标
+     *   - 线重新出现 / 偏航达到目标
+     *   - 只有 yaw 已判不可靠时，才允许编码器里程作为后备结束条件
      * 注意：这里对应“原 exit 前的检测”，所以先记完状态再切到 EXIT。 */
     if ((elapsed >= LAB_TURN_MIN_MS) &&
-        ((g_turnLineCaptureCount >=
-          LAB_TURN_LINE_CAPTURE_CONFIRM) ||
-         (g_turnTravelMm >= g_turnDistanceMm) ||
-         ((g_turnYawReliable != 0U) &&
-          (g_turnYawX10 >= g_turnAngleX10)))) {
+         ((g_turnLineCaptureCount >=
+           LAB_TURN_LINE_CAPTURE_CONFIRM) ||
+          ((g_turnYawReliable == 0U) &&
+           (g_turnTravelMm >= g_turnDistanceMm)) ||
+          ((g_turnYawReliable != 0U) &&
+           (g_turnYawX10 >= g_turnAngleX10)))) {
         g_turnCapturedByLine =
             (g_turnLineCaptureCount >=
              LAB_TURN_LINE_CAPTURE_CONFIRM) ? 1U : 0U;
@@ -2209,111 +2767,118 @@ static void update_closed_loop(uint32_t nowMs)
     MOTOR_SetPWM(g_leftPwm, g_rightPwm);
 }
 
-static uint8_t key_pressed_raw(void)
+static uint8_t key_pressed_raw(uint8_t index)
 {
-    /* 新底板三个按键分别接 PB23 / PA8 / PB6，按下均为低电平。
-     * 三个引脚跨 GPIOA/GPIOB，必须分别按各自端口读取。为了保持旧工程
-     * 的脱机启动交互不变，任意一个板载按键都视为一次“按键动作”。 */
-    uint32_t sw1 = DL_GPIO_readPins(KEY_SW1_PORT, KEY_SW1_PIN);
-    uint32_t sw2 = DL_GPIO_readPins(KEY_SW2_PORT, KEY_SW2_PIN);
-    uint32_t sw3 = DL_GPIO_readPins(KEY_SW3_PORT, KEY_SW3_PIN);
+    uint32_t value;
+    uint32_t pin;
 
-    return (((sw1 & KEY_SW1_PIN) == 0U) ||
-            ((sw2 & KEY_SW2_PIN) == 0U) ||
-            ((sw3 & KEY_SW3_PIN) == 0U)) ? 1U : 0U;
+    /* 新底板三个按键分别接 PB23 / PA8 / PB6，按下均为低电平。 */
+    if (index == 0U) {
+        value = DL_GPIO_readPins(KEY_SW1_PORT, KEY_SW1_PIN);
+        pin = KEY_SW1_PIN;
+    } else if (index == 1U) {
+        value = DL_GPIO_readPins(KEY_SW2_PORT, KEY_SW2_PIN);
+        pin = KEY_SW2_PIN;
+    } else {
+        value = DL_GPIO_readPins(KEY_SW3_PORT, KEY_SW3_PIN);
+        pin = KEY_SW3_PIN;
+    }
+    return ((value & pin) == 0U) ? 1U : 0U;
 }
 
-static void update_arm_key(uint32_t nowMs)
+static void stop_from_key(void)
 {
-    /* 空闲状态下：
-     *   - 短按并松开：圈数在 1~5 之间循环；
-     *   - 按住 1.2 秒后松开：按当前圈数启动脱机方框；
-     *   - ARM 直线测试仍在松开按键后启动。 */
-    uint8_t raw;
-    uint32_t elapsed;
+    g_tuneMetrics.kind = LAB_TUNE_NONE;
+    stop_motors();
+    g_streamEnabled = 0U;
+    g_compactTuneStream = 0U;
+    g_captureLog = 0U;
+    g_dumpActive = 0U;
+    g_straightArmed = 0U;
+    g_startPending = 0U;
+    g_squareStartPending = 0U;
+    SERIAL_SendString("KEY STOP\r\n");
+}
 
-    /* 防重入：本毫秒已经处理过 */
-    if (nowMs == g_lastKeySampleMs) {
-        return;
-    }
-
-    elapsed = nowMs - g_lastKeySampleMs;
-    g_lastKeySampleMs = nowMs;
-    if (elapsed > LAB_KEY_DEBOUNCE_MS) {
-        elapsed = LAB_KEY_DEBOUNCE_MS;
-    }
-
-    raw = key_pressed_raw();
-    if (raw == g_keyRawLast) {
-        /* 电平与上一帧一致：累计“已保持时长” */
-        uint32_t same = (uint32_t)g_keySameMs + elapsed;
-        g_keySameMs = (uint16_t)((same > 60000U) ? 60000U : same);
-    } else {
-        /* 电平跳变：清零计时，更新原始电平 */
-        g_keyRawLast = raw;
-        g_keySameMs = 0U;
-    }
-
-    /* 保持时间超过消抖阈值：把这一帧的原始电平作为“稳定电平” */
-    if (g_keySameMs >= LAB_KEY_DEBOUNCE_MS) {
-        g_keyStable = raw;
-    }
-
-    /* 按下沿：只开始计时，不立即启动。 */
-    if ((g_keyLastStable == 0U) &&
-        (g_keyStable != 0U) &&
-        (g_mode == LAB_MODE_IDLE)) {
-        g_keyPressStartMs = nowMs;
-        g_keyPressActive = 1U;
-        g_keyLongReady = 0U;
-    }
-
-    /* 达到长按阈值后提示；必须松手才真正进入启动倒计时。 */
-    if ((g_keyStable != 0U) &&
-        (g_keyPressActive != 0U) &&
-        (g_keyLongReady == 0U) &&
-        (g_straightArmed == 0U) &&
-        (g_mode == LAB_MODE_IDLE) &&
-        ((nowMs - g_keyPressStartMs) >= LAB_KEY_LONG_PRESS_MS)) {
-        g_keyLongReady = 1U;
-        SERIAL_SendString("LAPS CONFIRMED,");
-        SERIAL_SendInt32(g_selectedSquareLaps);
-        SERIAL_SendString("; RELEASE TO START\r\n");
-    }
-
-    /* 松开沿：区分短按选圈、长按启动和旧的 ARM 直线启动。 */
-    if ((g_keyLastStable != 0U) &&
-        (g_keyStable == 0U) &&
-        (g_keyPressActive != 0U)) {
-        uint32_t pressMs = nowMs - g_keyPressStartMs;
-
+static void handle_key_press(uint8_t index, uint32_t nowMs)
+{
+    if (index == 0U) {
+        /* SW1: idle only, decrease target laps without wrapping. */
         if ((g_mode == LAB_MODE_IDLE) &&
-            (g_straightArmed != 0U)) {
-            g_straightArmed = 0U;
-            g_startPending = 1U;
-            g_pendingStartMs = nowMs;
-        } else if ((g_mode == LAB_MODE_IDLE) &&
-                   (g_keyLongReady != 0U)) {
-            g_squareStartPending = 1U;
-            g_pendingStartMs = nowMs;
-            SERIAL_SendString(
-                "STANDALONE SQUARE: START IN 2 SECONDS\r\n");
-        } else if ((g_mode == LAB_MODE_IDLE) &&
-                   (pressMs >= LAB_KEY_DEBOUNCE_MS)) {
-            g_selectedSquareLaps++;
-            if (g_selectedSquareLaps >
-                LAB_STANDALONE_MAX_LAPS) {
-                g_selectedSquareLaps = 1U;
-            }
+            (g_startPending == 0U) &&
+            (g_squareStartPending == 0U) &&
+            (g_selectedSquareLaps > 1U)) {
+            g_selectedSquareLaps--;
+            g_squareCornerCount = 0U;
             SERIAL_SendString("LAPS SELECTED,");
             SERIAL_SendInt32(g_selectedSquareLaps);
             SERIAL_SendString("\r\n");
         }
-        g_keyPressActive = 0U;
-        g_keyLongReady = 0U;
+        return;
     }
 
-    g_keyLastStable = g_keyStable;
+    if (index == 1U) {
+        /* SW2: idle only, increase target laps up to the safety limit. */
+        if ((g_mode == LAB_MODE_IDLE) &&
+            (g_startPending == 0U) &&
+            (g_squareStartPending == 0U) &&
+            (g_selectedSquareLaps < LAB_STANDALONE_MAX_LAPS)) {
+            g_selectedSquareLaps++;
+            g_squareCornerCount = 0U;
+            SERIAL_SendString("LAPS SELECTED,");
+            SERIAL_SendInt32(g_selectedSquareLaps);
+            SERIAL_SendString("\r\n");
+        }
+        return;
+    }
+
+    /* SW3 is also a local emergency stop/cancel while anything is active. */
+    if ((g_mode != LAB_MODE_IDLE) || (g_startPending != 0U) ||
+        (g_squareStartPending != 0U)) {
+        stop_from_key();
+    } else if (g_straightArmed != 0U) {
+        /* Preserve the upper-computer ARM workflow, but use SW3 explicitly. */
+        g_straightArmed = 0U;
+        g_startPending = 1U;
+        g_pendingStartMs = nowMs;
+        SERIAL_SendString("ARM RUN: START IN 2 SECONDS\r\n");
+    } else {
+        g_squareStartPending = 1U;
+        g_pendingStartMs = nowMs;
+        g_squareCornerCount = 0U;
+        SERIAL_SendString("STANDALONE SQUARE: START IN 2 SECONDS\r\n");
+    }
+}
+
+static void update_arm_key(uint32_t nowMs)
+{
+    uint8_t index;
+    uint32_t elapsed;
+
+    if (nowMs == g_lastKeySampleMs) return;
+    elapsed = nowMs - g_lastKeySampleMs;
+    g_lastKeySampleMs = nowMs;
+    if (elapsed > LAB_KEY_DEBOUNCE_MS) elapsed = LAB_KEY_DEBOUNCE_MS;
+
+    for (index = 0U; index < 3U; index++) {
+        LabKeyState_t *key = &g_keys[index];
+        uint8_t raw = key_pressed_raw(index);
+
+        if (raw == key->rawLast) {
+            uint32_t same = (uint32_t)key->sameMs + elapsed;
+            key->sameMs = (uint16_t)((same > 60000U) ? 60000U : same);
+        } else {
+            key->rawLast = raw;
+            key->sameMs = 0U;
+        }
+        if (key->sameMs >= LAB_KEY_DEBOUNCE_MS) key->stable = raw;
+
+        /* Act once on the debounced press edge; release only rearms the key. */
+        if ((key->lastStable == 0U) && (key->stable != 0U)) {
+            handle_key_press(index, nowMs);
+        }
+        key->lastStable = key->stable;
+    }
 }
 
 static void update_pending_start(uint32_t nowMs)
@@ -2373,6 +2938,7 @@ void LAB_Init(void)
 
     stop_motors();
     g_streamEnabled = 0U;
+    g_compactTuneStream = 0U;
     g_modeStartMs = 0U;
     g_lastMotorCommandMs = 0U;
     g_lastStreamMs = 0U;
@@ -2397,15 +2963,15 @@ void LAB_Init(void)
     g_squareTargetLaps = 1U;
     g_squareCornerCount = 0U;
 
-    /* 把按键的初始电平当作“上一次稳定电平”，避免开机时误识别为按下 */
-    g_keyRawLast = key_pressed_raw();
-    g_keyStable = g_keyRawLast;
-    g_keyLastStable = g_keyStable;
-    g_keySameMs = 0U;
+    /* 把每个按键初始电平作为稳定电平，避免开机时误识别为按下。 */
+    for (uint8_t keyIndex = 0U; keyIndex < 3U; keyIndex++) {
+        uint8_t raw = key_pressed_raw(keyIndex);
+        g_keys[keyIndex].rawLast = raw;
+        g_keys[keyIndex].stable = raw;
+        g_keys[keyIndex].lastStable = raw;
+        g_keys[keyIndex].sameMs = 0U;
+    }
     g_lastKeySampleMs = 0U;
-    g_keyPressStartMs = 0U;
-    g_keyPressActive = 0U;
-    g_keyLongReady = 0U;
     g_selectedSquareLaps = 1U;
 
     SERIAL_SendString("\r\nPID LAB CLOSED LOOP READY\r\n");
@@ -2438,6 +3004,10 @@ void LAB_Task(uint32_t nowMs)
     update_arm_key(nowMs);
     update_pending_start(nowMs);
     update_closed_loop(nowMs);
+
+    /* 自动整定测试在主控本地采样并由此统一结束；必须放在通用 TEST DONE
+     * 判断之前，避免实时 CSV 链路参与速度环参数选择。 */
+    update_tune_metrics(nowMs);
 
     /* 开环 PWM 模式如果长时间没有新命令：强制停转，避免失控 */
     if ((g_mode == LAB_MODE_OPEN_PWM) &&
@@ -2478,7 +3048,11 @@ void LAB_Task(uint32_t nowMs)
     if ((g_streamEnabled != 0U) &&
         ((nowMs - g_lastStreamMs) >= LAB_STREAM_PERIOD_MS)) {
         g_lastStreamMs = nowMs;
-        send_stream_sample(nowMs);
+        if (g_compactTuneStream != 0U) {
+            send_compact_tune_sample(nowMs);
+        } else {
+            send_stream_sample(nowMs);
+        }
     }
 
     /* DUMP 期间按节奏逐条发送离线日志 */

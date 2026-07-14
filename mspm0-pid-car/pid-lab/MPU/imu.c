@@ -160,9 +160,9 @@ void IMU_Init(void)
     g_yawZeroX10 = 0;
 }
 
-/* 每 5 ms 读取一帧 IMU。成功帧更新 yaw 和 ready；通信/数据校验失败只累加错误，
+/* 每 10 ms 读取一帧 IMU。成功帧更新 yaw 和 ready；通信/数据校验失败只累加错误，
  * 连续失败达到阈值才清 ready，因此转弯不会因一次偶发总线干扰突然失去角度依据。 */
-void IMU_Task5ms(void)
+void IMU_Task10ms(void)
 {
     uint8_t buffer[IMU_EULER_LEN];
     float yawRadians;

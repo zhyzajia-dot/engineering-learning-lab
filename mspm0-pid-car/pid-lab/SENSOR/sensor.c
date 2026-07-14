@@ -214,7 +214,7 @@ void SENSOR_Init(void)
     i2c_clean();
 }
 
-/* 读取一帧八路灰度数据，建议与 IMU 一样由 main 每 5 ms 调用。
+/* 读取一帧八路灰度数据，与 IMU 一样由 main 每 10 ms 调用。
  * 已确认 0x5D 在线时直接读取以减少共享 I2C 总线占用；读错时下一帧重探地址。
  * data 不可为 NULL，valid=1 才代表 mask 可供循迹/方框算法使用。 */
 void SENSOR_ReadData(SENSOR_Data_t *data)
@@ -227,7 +227,7 @@ void SENSOR_ReadData(SENSOR_Data_t *data)
 
     /*
      * 上一帧成功后直接读取结果。读取失败时，下一帧重新探测地址。
-     * 正常运行时每 5 ms 只执行一次结果读取。
+     * 正常运行时每 10 ms 只执行一次结果读取。
      */
     if ((g_foundAddr == LINE_SENSOR_ADDR) && (g_i2cOk != 0U)) {
         if (line_sensor_read_result(&value) != 0U) {

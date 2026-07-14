@@ -28,6 +28,15 @@ constexpr uint16_t kPacketMagic = 0x5049;
 constexpr uint8_t kPacketVersion = 1;
 constexpr size_t kPayloadSize = 200;
 constexpr uint8_t kMaxRetries = 3;
+constexpr uint32_t kSendCallbackTimeoutMs = 80;
+/*
+ * UART at 115200 baud needs about 8.7 ms for a 100-byte PID row.  Sending as
+ * soon as the first byte arrives turns one row into dozens of ESP-NOW packets
+ * and makes a single lost packet destroy the whole row.  Give UART a short
+ * coalescing window so commands and compact tune results normally travel in
+ * one radio packet, while a live PID row uses at most two packets.
+ */
+constexpr uint32_t kSerialCoalesceMs = 10;
 constexpr uint8_t kDiagnosticCommand[] = "RADIOPING\r\n";
 constexpr uint8_t kDiagnosticReply[] = "BRIDGE_RADIO_PONG\r\n";
 
@@ -48,6 +57,7 @@ volatile bool sendBusy = false;
 volatile bool sendFinished = false;
 volatile bool sendSucceeded = false;
 uint8_t retryCount = 0;
+uint32_t sendStartedMs = 0;
 uint32_t localSession = 0;
 uint16_t nextSequence = 0;
 uint32_t receivedSession = 0;
@@ -149,6 +159,7 @@ void startSend() {
   sendFinished = false;
   sendSucceeded = false;
   sendBusy = true;
+  sendStartedMs = millis();
   if (esp_now_send(const_cast<uint8_t *>(kPeerMac),
                    reinterpret_cast<uint8_t *>(&txPacket),
                    packetLength) != 0) {
@@ -158,7 +169,17 @@ void startSend() {
 
 /* 处理异步结果；失败时有限重试，避免短暂射频干扰直接丢包。 */
 void serviceSendResult() {
-  if (!sendBusy || !sendFinished) {
+  if (!sendBusy) {
+    return;
+  }
+
+  /* 极少数射频/SDK 异常不会触发发送回调。若一直等下去，sendBusy 会让
+   * 整座串口桥永久停止收集新数据；把它按失败处理并走同一有限重试。 */
+  if (!sendFinished && millis() - sendStartedMs >= kSendCallbackTimeoutMs) {
+    sendSucceeded = false;
+    sendFinished = true;
+  }
+  if (!sendFinished) {
     return;
   }
 
@@ -205,6 +226,14 @@ void serviceDiagnosticReply() {
 void collectSerialData() {
   if (!peerConfigured || sendBusy || Serial.available() <= 0) {
     return;
+  }
+
+  const uint32_t coalesceStartMs = millis();
+  while (Serial.available() < static_cast<int>(kPayloadSize) &&
+         millis() - coalesceStartMs < kSerialCoalesceMs) {
+    /* Keep the Wi-Fi task alive while UART hardware collects the rest of the
+     * current command/result line. */
+    delay(0);
   }
 
   txPacket.magic = kPacketMagic;
@@ -274,7 +303,9 @@ void initializeEspNow() {
 /* Arduino 启动入口：初始化串口、生成本次 session 并建立无线链路。 */
 void setup() {
   Serial.begin(kSerialBaud);
-  Serial.setRxBufferSize(512);
+  /* 车端在转发实时 PID 数据时，ESP-NOW 一包尚未完成的短窗口内 UART
+   * 仍可能继续进字节。2 KiB 缓冲可覆盖该窗口，避免把一条 CSV 截成两段。 */
+  Serial.setRxBufferSize(2048);
   delay(300);
 
   localSession = ESP.getChipId() ^ ESP.getCycleCount();

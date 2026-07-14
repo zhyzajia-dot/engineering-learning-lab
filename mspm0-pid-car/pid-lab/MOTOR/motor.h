@@ -28,5 +28,7 @@ void MOTOR_SetPWM(int16_t leftPwm, int16_t rightPwm);
 /* 获取最近一次设置的逻辑 PWM（用于日志/上位机显示） */
 int16_t MOTOR_GetLeftPWM(void);
 int16_t MOTOR_GetRightPWM(void);
+/* 读取 STBY 输出锁存状态 */
+uint8_t MOTOR_IsDriverEnabled(void);
 
 #endif

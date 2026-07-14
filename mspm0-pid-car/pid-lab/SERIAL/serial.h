@@ -28,6 +28,9 @@ void SERIAL_Init(void);
 /* 把 TX 缓冲区里的数据搬运到 UART FIFO，应在主循环高频调用 */
 void SERIAL_Task(void);
 
+/* 若还能原子容纳至少 bytes 个日志字节，返回 1；否则返回 0。 */
+uint8_t SERIAL_TxCanAccept(uint16_t bytes);
+
 /*
  * 尝试从 RX 缓冲区读出一行（以 \r 或 \n 结尾）。
  * 成功返回 1，并把去掉行尾换行的字符串写入 line；否则返回 0。
