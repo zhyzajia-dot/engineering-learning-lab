@@ -23,14 +23,19 @@
 /* 初始化内部状态、统计计数 */
 void IMU_Init(void);
 
-/* 10 ms 周期任务：读取一帧 IMU 欧拉角，更新 yaw */
-void IMU_Task10ms(void);
+/* 10 ms 周期任务：nowMs 为 MCU 上电毫秒数；冷启动完成后读取欧拉角并更新 yaw */
+void IMU_Task10ms(uint32_t nowMs);
 
 /* 把当前 yaw 当作新参考点，IMU_GetRelativeYawX10() 后续返回相对值 */
 void IMU_BeginRelativeYaw(void);
 
 /* IMU 当前数据是否有效（最近一次任务是否成功） */
 uint8_t IMU_IsReady(void);
+
+/* 上电等待状态与固件版本诊断。 */
+uint8_t IMU_IsWarmingUp(void);
+uint8_t IMU_IsVersionReady(void);
+uint8_t IMU_GetVersionByte(uint8_t index);
 
 /* 自上电以来成功读取次数 */
 uint32_t IMU_GetOkCount(void);

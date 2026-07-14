@@ -142,10 +142,15 @@ void onReceive(uint8_t *mac, uint8_t *data, uint8_t length) {
 
 #if !BRIDGE_SIDE_PC
   /* 小车端本地识别 RADIOPING，让无线链路测试不依赖 MSPM0。 */
+  bool localDiagnostic = false;
   for (size_t index = 0; index < packet.length; ++index) {
     if (trackDiagnosticCommand(packet.payload[index])) {
       diagnosticReplyPending = true;
+      localDiagnostic = true;
     }
+  }
+  if (localDiagnostic) {
+    return;
   }
 #endif
 

@@ -1186,14 +1186,26 @@ static void send_sensor_status(void)
 
 static void send_imu_status(void)
 {
-    /* 单行 IMU 状态：OK/ERROR、绝对 yaw、成功/失败计数 */
+    /* 单行 IMU 状态：WARMUP/OK/ERROR、绝对 yaw、计数与固件版本 */
     SERIAL_SendString("IMU,");
-    SERIAL_SendString((IMU_IsReady() != 0U) ? "OK," : "ERROR,");
+    if (IMU_IsWarmingUp() != 0U) {
+        SERIAL_SendString("WARMUP,");
+    } else {
+        SERIAL_SendString((IMU_IsReady() != 0U) ? "OK," : "ERROR,");
+    }
     SERIAL_SendInt32(IMU_GetYawX10());
     SERIAL_SendString(",");
     SERIAL_SendInt32((int32_t)IMU_GetOkCount());
     SERIAL_SendString(",");
     SERIAL_SendInt32((int32_t)IMU_GetErrorCount());
+    SERIAL_SendString(",VER,");
+    SERIAL_SendInt32((int32_t)IMU_IsVersionReady());
+    SERIAL_SendString(",");
+    SERIAL_SendInt32((int32_t)IMU_GetVersionByte(0U));
+    SERIAL_SendString(",");
+    SERIAL_SendInt32((int32_t)IMU_GetVersionByte(1U));
+    SERIAL_SendString(",");
+    SERIAL_SendInt32((int32_t)IMU_GetVersionByte(2U));
     SERIAL_SendString("\r\n");
 }
 

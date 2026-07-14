@@ -109,12 +109,13 @@ static uint8_t i2c_probe_addr(uint8_t addr)
 
     DL_I2C_fillControllerTXFIFO(I2C_BUS_INST, &reg, 1U);
 
-    DL_I2C_startControllerTransfer(I2C_BUS_INST,
-                                   addr,
-                                   DL_I2C_CONTROLLER_DIRECTION_TX,
-                                   1U);
+    /* Keep the register pointer write and following read in one I2C
+     * transaction. The sensor, like the IMU, requires a repeated START. */
+    /* Complete write transaction: START + address + register + STOP. */
+    DL_I2C_startControllerTransfer(
+        I2C_BUS_INST, addr, DL_I2C_CONTROLLER_DIRECTION_TX, 1U);
 
-    if (i2c_wait_done() == 0U) {
+    if (i2c_wait_done() == 0U || i2c_wait_bus_free() == 0U) {
         return 0U;
     }
 
@@ -156,20 +157,13 @@ static uint8_t i2c_write_reg_then_read(uint8_t addr, uint8_t reg, uint8_t *value
                                    DL_I2C_CONTROLLER_DIRECTION_TX,
                                    1U);
 
-    if (i2c_wait_done() == 0U) {
+    if (i2c_wait_done() == 0U || i2c_wait_bus_free() == 0U) {
         return 0U;
     }
 
-    /* 两次传输之间插入一个短延时，避免从机还没准备好 */
-    for (volatile uint32_t i = 0U; i < 100U; i++) {
-    }
-
-    i2c_clean();
-
-    DL_I2C_startControllerTransfer(I2C_BUS_INST,
-                                   addr,
-                                   DL_I2C_CONTROLLER_DIRECTION_RX,
-                                   1U);
+    /* Complete read transaction after the register-pointer write. */
+    DL_I2C_startControllerTransfer(
+        I2C_BUS_INST, addr, DL_I2C_CONTROLLER_DIRECTION_RX, 1U);
 
     while (DL_I2C_isControllerRXFIFOEmpty(I2C_BUS_INST) != false) {
         if ((DL_I2C_getControllerStatus(I2C_BUS_INST) &

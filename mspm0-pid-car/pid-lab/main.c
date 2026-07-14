@@ -28,6 +28,59 @@
 #define ENCODER_TASK_PERIOD_MS  5U
 #define I2C_TASK_PERIOD_MS     10U
 
+/* Build-only diagnostic.  When enabled, the firmware scans all legal 7-bit
+ * addresses once after the IMU startup delay and prints each address whose
+ * address phase is ACKed.  Normal firmware keeps this disabled. */
+#ifndef I2C_ADDRESS_SCAN_DIAG_ENABLE
+#define I2C_ADDRESS_SCAN_DIAG_ENABLE 0
+#endif
+
+/*
+ * 临时硬件定位开关。正常工程保持 0；单独的诊断 HEX 会临时改为 1。
+ * 该测试只允许在灰度传感器和 IMU 已拔掉时使用：PB2/PB3 会被短暂
+ * 配成推挽 GPIO，输出可被逻辑分析仪直接辨认的互补方波，随后恢复 I2C1。
+ */
+#ifndef I2C_PIN_SELFTEST_ENABLE
+#define I2C_PIN_SELFTEST_ENABLE 0
+#endif
+
+#if (I2C_PIN_SELFTEST_ENABLE != 0)
+static void i2c_pin_selftest(void)
+{
+    uint8_t cycle;
+
+    /* 覆盖 SysConfig 的 I2C 复用，仅用于确认 PB2/PB3 的实际物理测点。 */
+    DL_GPIO_initDigitalOutput(GPIO_I2C_BUS_IOMUX_SCL);
+    DL_GPIO_initDigitalOutput(GPIO_I2C_BUS_IOMUX_SDA);
+    DL_GPIO_enableOutput(GPIO_I2C_BUS_SCL_PORT, GPIO_I2C_BUS_SCL_PIN);
+    DL_GPIO_enableOutput(GPIO_I2C_BUS_SDA_PORT, GPIO_I2C_BUS_SDA_PIN);
+
+    /* 约 5 秒的互补电平：CH0/CH1 必须交替高低，便于任意时刻开始采集。 */
+    for (cycle = 0U; cycle < 50U; cycle++) {
+        DL_GPIO_setPins(GPIO_I2C_BUS_SCL_PORT, GPIO_I2C_BUS_SCL_PIN);
+        DL_GPIO_clearPins(GPIO_I2C_BUS_SDA_PORT, GPIO_I2C_BUS_SDA_PIN);
+        delay_cycles(CPUCLK_FREQ / 20U);
+
+        DL_GPIO_clearPins(GPIO_I2C_BUS_SCL_PORT, GPIO_I2C_BUS_SCL_PIN);
+        DL_GPIO_setPins(GPIO_I2C_BUS_SDA_PORT, GPIO_I2C_BUS_SDA_PIN);
+        delay_cycles(CPUCLK_FREQ / 20U);
+    }
+
+    /* 还原 PB2/PB3 的 I2C1 复用和控制器状态，之后程序按正常流程运行。 */
+    DL_GPIO_initPeripheralInputFunctionFeatures(
+        GPIO_I2C_BUS_IOMUX_SDA, GPIO_I2C_BUS_IOMUX_SDA_FUNC,
+        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
+        DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
+    DL_GPIO_initPeripheralInputFunctionFeatures(
+        GPIO_I2C_BUS_IOMUX_SCL, GPIO_I2C_BUS_IOMUX_SCL_FUNC,
+        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
+        DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
+    DL_GPIO_enableHiZ(GPIO_I2C_BUS_IOMUX_SDA);
+    DL_GPIO_enableHiZ(GPIO_I2C_BUS_IOMUX_SCL);
+    SYSCFG_DL_I2C_BUS_init();
+}
+#endif
+
 /* 独立看门狗约 1 秒超时：主循环若因 I2C 或程序异常彻底卡死，
  * MCU 会自动复位；复位后 PWM 和方向脚按初始化流程回到停转状态。 */
 static void watchdog_init(void)
@@ -63,6 +116,84 @@ static uint32_t millis(void)
     return g_msTick;
 }
 
+#if (I2C_ADDRESS_SCAN_DIAG_ENABLE != 0)
+static uint8_t i2c_probe_address(uint8_t address)
+{
+    uint8_t dummy = 0U;
+    uint8_t addressAcked = 0U;
+    uint32_t timeout = 20000U;
+
+    while ((DL_I2C_getControllerStatus(I2C_BUS_INST) &
+            DL_I2C_CONTROLLER_STATUS_BUSY_BUS) != 0U) {
+        if (timeout-- == 0U) return 0U;
+    }
+
+    DL_I2C_resetControllerTransfer(I2C_BUS_INST);
+    DL_I2C_flushControllerTXFIFO(I2C_BUS_INST);
+    DL_I2C_flushControllerRXFIFO(I2C_BUS_INST);
+    DL_I2C_clearInterruptStatus(I2C_BUS_INST,
+        DL_I2C_INTERRUPT_CONTROLLER_TX_DONE |
+        DL_I2C_INTERRUPT_CONTROLLER_NACK |
+        DL_I2C_INTERRUPT_CONTROLLER_ARBITRATION_LOST);
+    DL_I2C_fillControllerTXFIFO(I2C_BUS_INST, &dummy, 1U);
+    DL_I2C_startControllerTransfer(I2C_BUS_INST, address,
+        DL_I2C_CONTROLLER_DIRECTION_TX, 1U);
+
+    timeout = 20000U;
+    while (timeout-- != 0U) {
+        uint32_t status = DL_I2C_getControllerStatus(I2C_BUS_INST);
+        uint32_t raw = DL_I2C_getRawInterruptStatus(I2C_BUS_INST,
+            DL_I2C_INTERRUPT_CONTROLLER_TX_DONE |
+            DL_I2C_INTERRUPT_CONTROLLER_NACK |
+            DL_I2C_INTERRUPT_CONTROLLER_ARBITRATION_LOST);
+
+        if ((status & DL_I2C_CONTROLLER_STATUS_ADDR_ACK) != 0U) {
+            addressAcked = 1U;
+        }
+        if ((raw & (DL_I2C_INTERRUPT_CONTROLLER_NACK |
+                    DL_I2C_INTERRUPT_CONTROLLER_ARBITRATION_LOST)) != 0U ||
+            (raw & DL_I2C_INTERRUPT_CONTROLLER_TX_DONE) != 0U) {
+            break;
+        }
+    }
+
+    DL_I2C_resetControllerTransfer(I2C_BUS_INST);
+    DL_I2C_flushControllerTXFIFO(I2C_BUS_INST);
+    DL_I2C_flushControllerRXFIFO(I2C_BUS_INST);
+    return addressAcked;
+}
+
+static void run_i2c_address_scan(void)
+{
+    uint8_t address;
+
+    while (millis() < 6000U) {
+        SERIAL_Task();
+        watchdog_feed();
+    }
+
+    while (1) {
+        SERIAL_SendString("I2C_SCAN,BEGIN\r\n");
+        for (address = 0x08U; address <= 0x77U; address++) {
+            if (i2c_probe_address(address) != 0U) {
+                SERIAL_SendString("I2C_FOUND,");
+                SERIAL_SendInt32((int32_t)address);
+                SERIAL_SendString("\r\n");
+            }
+            SERIAL_Task();
+            watchdog_feed();
+            delay_cycles(CPUCLK_FREQ / 1000U);
+        }
+        SERIAL_SendString("I2C_SCAN,END\r\n");
+        for (address = 0U; address < 100U; address++) {
+            SERIAL_Task();
+            watchdog_feed();
+            delay_cycles(CPUCLK_FREQ / 1000U);
+        }
+    }
+}
+#endif
+
 int main(void)
 {
     /* 编码器和共享 I2C 任务独立分频，避免无效占用总线。 */
@@ -73,6 +204,10 @@ int main(void)
 
     /* SysConfig 自动生成的底层初始化：时钟、GPIO、外设配置等 */
     SYSCFG_DL_init();
+
+#if (I2C_PIN_SELFTEST_ENABLE != 0)
+    i2c_pin_selftest();
+#endif
 
     /* 各功能模块的初始化与安全默认状态：
      *   - SysConfig/MOTOR : STBY 上电置高一次，PWM/方向清零
@@ -96,6 +231,10 @@ int main(void)
     DL_TimerG_startCounter(CTRL_TIMER_INST);
     __enable_irq();
 
+#if (I2C_ADDRESS_SCAN_DIAG_ENABLE != 0)
+    run_i2c_address_scan();
+#endif
+
     while (1) {
         /* 高频：尽快把已到达的字符处理掉，避免环形缓冲区溢出 */
         SERIAL_Task();
@@ -110,7 +249,7 @@ int main(void)
         if ((millis() - lastI2cTick) >= I2C_TASK_PERIOD_MS) {
             lastI2cTick = millis();
             SENSOR_ReadData(&sensor);
-            IMU_Task10ms();
+            IMU_Task10ms(lastI2cTick);
         }
 
         /* 上位机控制任务：解析串口命令、按键、闭环控制、状态打印 */
