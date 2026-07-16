@@ -23,6 +23,8 @@
 #define LINE_SENSOR_RESULT_REG    5U
 /* I2C 等待/重试的超时计数 */
 #define I2C_TIMEOUT                5000U
+/* At 10 ms/frame, hold at most two failed frames before invalidating data. */
+#define SENSOR_BAD_FRAMES_BEFORE_INVALID 3U
 
 /* 最近一次读到的位掩码（bit0..bit7 对应 S0..S7） */
 static uint8_t g_rawMask = 0U;
@@ -30,12 +32,45 @@ static uint8_t g_rawMask = 0U;
 static uint8_t g_rawByte = 0U;
 /* 最近一次 I2C 通信是否成功 */
 static uint8_t g_i2cOk = 0U;
+/* Filtered validity used by line control, separate from latest I2C status. */
+static uint8_t g_lineDataUsable = 0U;
+static uint8_t g_consecutiveBadFrames = 0U;
 /* 诊断码（见头文件说明） */
 static uint8_t g_diagCode = 4U;
 /* 当前已识别到的 I2C 地址 */
 static uint8_t g_foundAddr = 0U;
 /* 自上电以来累计的坏帧数 */
 static uint16_t g_badFrameCount = 0U;
+
+static void sensor_record_good(uint8_t value)
+{
+    g_rawByte = value;
+    g_rawMask = value;
+    g_i2cOk = 1U;
+    g_lineDataUsable = 1U;
+    g_consecutiveBadFrames = 0U;
+    g_diagCode = 0U;
+}
+
+static void sensor_record_failure(uint8_t diagCode)
+{
+    g_i2cOk = 0U;
+    g_diagCode = diagCode;
+
+    if (g_badFrameCount < 60000U) {
+        g_badFrameCount++;
+    }
+    if (g_consecutiveBadFrames < 255U) {
+        g_consecutiveBadFrames++;
+    }
+
+    if ((g_lineDataUsable == 0U) ||
+        (g_consecutiveBadFrames >= SENSOR_BAD_FRAMES_BEFORE_INVALID)) {
+        g_lineDataUsable = 0U;
+        g_rawMask = 0U;
+        g_rawByte = 0U;
+    }
+}
 
 /* 软件复位 I2C 控制器、清空两个 FIFO，必要时用于恢复总线卡死 */
 static void i2c_clean(void)
@@ -201,6 +236,8 @@ void SENSOR_Init(void)
     g_rawMask = 0U;
     g_rawByte = 0U;
     g_i2cOk = 0U;
+    g_lineDataUsable = 0U;
+    g_consecutiveBadFrames = 0U;
     g_diagCode = 4U;
     g_foundAddr = 0U;
     g_badFrameCount = 0U;
@@ -226,10 +263,7 @@ void SENSOR_ReadData(SENSOR_Data_t *data)
     if ((g_foundAddr == LINE_SENSOR_ADDR) && (g_i2cOk != 0U)) {
         if (line_sensor_read_result(&value) != 0U) {
             /* 读成功：更新原始数据与状态 */
-            g_rawByte = value;
-            g_rawMask = value;
-            g_i2cOk = 1U;
-            g_diagCode = 0U;
+            sensor_record_good(value);
 
             data->mask = g_rawMask;
             data->valid = 1U;
@@ -247,54 +281,31 @@ void SENSOR_ReadData(SENSOR_Data_t *data)
 
     if (g_foundAddr == 0U) {
         /* 总线上没有任何传感器响应 */
-        g_rawMask = 0U;
-        g_rawByte = 0U;
-        g_i2cOk = 0U;
-        g_diagCode = 4U;
-
-        if (g_badFrameCount < 60000U) {
-            g_badFrameCount++;
-        }
-
-        data->mask = 0U;
-        data->valid = 0U;
+        sensor_record_failure(4U);
+        data->mask = g_rawMask;
+        data->valid = g_lineDataUsable;
         return;
     }
 
     if (g_foundAddr != LINE_SENSOR_ADDR) {
         /* 探测到别的地址：硬件配置异常 */
-        g_rawMask = 0U;
-        g_rawByte = g_foundAddr;
-        g_i2cOk = 0U;
-        g_diagCode = 7U;
-
-        data->mask = 0U;
-        data->valid = 0U;
+        sensor_record_failure(7U);
+        data->mask = g_rawMask;
+        data->valid = g_lineDataUsable;
         return;
     }
 
     /* 地址正确，尝试读取一次结果寄存器 */
     if (line_sensor_read_result(&value) != 0U) {
-        g_rawByte = value;
-        g_rawMask = value;
-        g_i2cOk = 1U;
-        g_diagCode = 0U;
+        sensor_record_good(value);
 
         data->mask = g_rawMask;
         data->valid = 1U;
     } else {
         /* 地址 ACK 了但读不到结果：可能是偶发干扰 */
-        g_rawMask = 0U;
-        g_rawByte = 0U;
-        g_i2cOk = 0U;
-        g_diagCode = 5U;
-
-        if (g_badFrameCount < 60000U) {
-            g_badFrameCount++;
-        }
-
-        data->mask = 0U;
-        data->valid = 0U;
+        sensor_record_failure(5U);
+        data->mask = g_rawMask;
+        data->valid = g_lineDataUsable;
     }
 }
 
@@ -316,6 +327,11 @@ uint8_t SENSOR_GetDiagCode(void)
 uint8_t SENSOR_GetI2cOk(void)
 {
     return g_i2cOk;
+}
+
+uint8_t SENSOR_IsLineDataUsable(void)
+{
+    return g_lineDataUsable;
 }
 
 uint8_t SENSOR_GetFoundAddr(void)

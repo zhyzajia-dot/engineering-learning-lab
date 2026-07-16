@@ -1,0 +1,152 @@
+{
+  "started_at_local": "2026-07-16T05:37:34",
+  "mode": "GIMBAL GUARD5 recovery qualification square",
+  "requested_speed_mmps": 120,
+  "requested_laps": 1,
+  "firmware_sha256": "27AE85B83E8F217BE0CD2CB978DF8F1E9AA45AE1CA093CD4DA057DA4793636E2",
+  "guard_version": 5,
+  "runtime_profile": 1,
+  "runtime_parameters": {
+    "LKP": 350,
+    "LKI": 100,
+    "RKP": 500,
+    "RKI": 350,
+    "LFF": 460,
+    "RFF": 437,
+    "LMIN": 32,
+    "RMIN": 26,
+    "SYNC": 500,
+    "BIAS": 80,
+    "GSTART": 10,
+    "LINEKP": 3000,
+    "LINEKD": 800,
+    "TURNANGLE": 900,
+    "TURNFAST": 150,
+    "TURNSLOW": 100,
+    "TURNMARGIN": 300,
+    "TURNEXIT": 100,
+    "TURNDIST": 98
+  },
+  "result": "stopped_by_recovery_timeout_after_continuous_progress",
+  "protocol_terminal_report": "SQUARE ERROR,GIMBAL RECOVERY TIMEOUT",
+  "physical_observation_after_run": null,
+  "first_edge_evidence": {
+    "samples": 178,
+    "time_window_ms": [
+      20,
+      3560
+    ],
+    "line_valid_samples": 178,
+    "first_left_encoder_motion_ms": 360,
+    "first_right_encoder_motion_ms": 380,
+    "breakaway_delay_difference_ms": 20,
+    "recovery_entry_ms": 1080,
+    "recovery_entry_reason": "relative yaw reached 5.1 degrees while the line remained valid",
+    "line_mask_timeline": [
+      {
+        "time_ms": 20,
+        "mask": 24,
+        "line_error": 0
+      },
+      {
+        "time_ms": 920,
+        "mask": 16,
+        "line_error": 2
+      },
+      {
+        "time_ms": 1100,
+        "mask": 48,
+        "line_error": 6
+      },
+      {
+        "time_ms": 3000,
+        "mask": 32,
+        "line_error": 11
+      },
+      {
+        "time_ms": 3520,
+        "mask": 48,
+        "line_error": 6
+      }
+    ],
+    "maximum_absolute_line_error": 11,
+    "maximum_yaw_x10": 61,
+    "maximum_yaw_time_ms": 1220,
+    "minimum_yaw_x10": -40,
+    "yaw_x10_at_last_sample": -40,
+    "minimum_count_diff": -32,
+    "count_diff_at_recovery_entry": -26,
+    "count_diff_at_last_sample": -3,
+    "corner_count": 0
+  },
+  "recovery_evidence": {
+    "common_target_mean_before_recovery_mmps": 120,
+    "common_target_mean_during_recovery_mmps": 80,
+    "estimated_left_recovery_travel_mm": 120.28,
+    "estimated_right_recovery_travel_mm": 93.64,
+    "estimated_mean_recovery_travel_mm": 106.96,
+    "configured_timeout_ms": 2500,
+    "configured_max_travel_mm": 200,
+    "last_sample": {
+      "time_ms": 3560,
+      "left_target_mmps": 108,
+      "right_target_mmps": 52,
+      "left_speed_mmps": 60,
+      "right_speed_mmps": 55,
+      "count_diff": -3,
+      "line_error": 6,
+      "line_mask": 48,
+      "line_valid": 1,
+      "yaw_x10": -40
+    }
+  },
+  "exit6_counterfactual_replay": {
+    "control_period_ms": 10,
+    "heading_sample_period_ms": 100,
+    "heading_turn_slew_mmps_per_control_period": 2,
+    "method": "Replay the recorded yaw and line samples with both zero-order hold and linear interpolation between 20 ms telemetry samples.",
+    "first_all_exit_conditions_ms": 2010,
+    "confirmation_complete_ms": 2100,
+    "heading_state_checkpoints": [
+      {
+        "time_ms": 2000,
+        "heading_target_mmps": 0,
+        "heading_turn_mmps": 6,
+        "confirmation_count": 0
+      },
+      {
+        "time_ms": 2010,
+        "heading_target_mmps": 0,
+        "heading_turn_mmps": 4,
+        "confirmation_count": 1
+      },
+      {
+        "time_ms": 2100,
+        "heading_target_mmps": -2,
+        "heading_turn_mmps": -2,
+        "confirmation_count": 10
+      }
+    ],
+    "conclusion": "For this recorded sensor trajectory, EXIT_ERROR=6 exits recovery before the unchanged 2500 ms timeout and far below the 200 mm travel guard. A new physical run is still required because the changed firmware can produce a different vehicle trajectory."
+  },
+  "diagnosis": "Adaptive breakaway and the common launch gate worked: both wheels began moving within 20 ms and no STALL occurred. Recovery remained on a valid line and reduced yaw and wheel-count error. Center-containing mask 48/error 6 persisted from 1.10 to 2.98 seconds and yaw was already within 4 degrees at 1.94 seconds, but the old exit threshold required error <=4, so the confirmation count remained zero throughout that usable window. The line later moved to error 11 and returned to error 6 only shortly before the unchanged 2.5 second timeout fired.",
+  "parameters_saved_by_failed_run": false,
+  "line_ab_started": false,
+  "rollback_confirmation": {
+    "profile": 1,
+    "SYNC": 500,
+    "BIAS": 80,
+    "GSTART": 10,
+    "LINEKP": 6750,
+    "LINEKD": 2000,
+    "TURNANGLE": 900,
+    "TURNFAST": 185,
+    "TURNSLOW": 140,
+    "TURNMARGIN": 180,
+    "TURNEXIT": 140,
+    "TURNDIST": 98
+  },
+  "corrective_action": "Leave LINEKP/LINEKD unchanged. Change the recovery exit line-error threshold from 4 to 6 because mask 48 contains the center sensor, while retaining yaw <=4 degrees, heading target/output <=5 mm/s, 10 consecutive confirmations, the 2.5 second timeout, the independent 200 mm travel limit, line-loss guards and heading hard guards. Full-window replay shows that mask 48/error 6 persisted from 1.10 to 2.98 seconds and yaw returned within 4 degrees at 1.94 seconds; with the new threshold the heading target/output settle and confirmation can complete around 2.10 seconds, before the old timeout. Preserve the current yaw sample as the heading derivative origin when recovery exits.",
+  "load_metadata_file": "load_metadata.json",
+  "protocol_trace_file": "protocol_trace.log"
+}

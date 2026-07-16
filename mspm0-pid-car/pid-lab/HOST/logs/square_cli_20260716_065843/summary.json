@@ -1,0 +1,194 @@
+{
+  "started_at_local": "2026-07-16T06:58:43",
+  "mode": "GIMBAL GUARD6 recovery and turn-capture qualification square",
+  "requested_speed_mmps": 120,
+  "requested_laps": 1,
+  "firmware_sha256": "D08A499C30243324D3167B5760725A28E71AFAE11378F41648BFF0AC463AD873",
+  "guard_version": 6,
+  "runtime_profile": 1,
+  "runtime_parameters": {
+    "LKP": 350,
+    "LKI": 100,
+    "RKP": 500,
+    "RKI": 350,
+    "LFF": 460,
+    "RFF": 437,
+    "LMIN": 32,
+    "RMIN": 26,
+    "SYNC": 500,
+    "BIAS": 80,
+    "GSTART": 10,
+    "LINEKP": 3000,
+    "LINEKD": 800,
+    "TURNANGLE": 900,
+    "TURNFAST": 150,
+    "TURNSLOW": 100,
+    "TURNMARGIN": 300,
+    "TURNEXIT": 100,
+    "TURNDIST": 98
+  },
+  "result": "false_recovery_timeout_before_first_corner_while_line_remained_valid_and_centered",
+  "firmware_terminal_report": "SQUARE ERROR,GIMBAL RECOVERY TIMEOUT",
+  "physical_observation_after_run": "User reported that the stopped vehicle's grayscale sensors were still over the black line.",
+  "run_evidence": {
+    "samples": 262,
+    "time_window_ms": [
+      20,
+      5243
+    ],
+    "line_valid_samples": 262,
+    "invalid_line_samples": 0,
+    "observed_line_masks": [
+      16,
+      24,
+      32,
+      48
+    ],
+    "observed_line_errors": [
+      0,
+      2,
+      6,
+      11
+    ],
+    "minimum_yaw_x10": -100,
+    "maximum_yaw_x10": 52,
+    "maximum_left_pwm": 153,
+    "maximum_right_pwm": 132,
+    "closed_loop_pwm_limit": 500,
+    "pwm_saturated": false,
+    "corner_count": 0
+  },
+  "guard6_recovery_evidence": {
+    "first_recovery_like_control_ms": 1581,
+    "first_recovery_like_sensor_state": {
+      "line_mask": 48,
+      "line_error": 6,
+      "line_valid": 1,
+      "yaw_x10": 51
+    },
+    "fixed_timeout_episode_entry_ms": 2761,
+    "fixed_timeout_episode_entry_sensor_state": {
+      "line_mask": 32,
+      "line_error": 11,
+      "line_valid": 1,
+      "yaw_x10": 14
+    },
+    "configured_timeout_ms": 2500,
+    "terminal_sample_ms": 5243,
+    "observed_entry_to_terminal_ms": 2482,
+    "sensor_progress_timeline": [
+      {
+        "time_ms": 2761,
+        "line_error": 11,
+        "line_mask": 32,
+        "yaw_x10": 14
+      },
+      {
+        "time_ms": 3383,
+        "line_error": 6,
+        "line_mask": 48,
+        "yaw_x10": -37
+      },
+      {
+        "time_ms": 4423,
+        "line_error": 2,
+        "line_mask": 16,
+        "yaw_x10": -98
+      },
+      {
+        "time_ms": 4603,
+        "line_error": 0,
+        "line_mask": 24,
+        "yaw_x10": -100
+      }
+    ],
+    "centered_tail": {
+      "samples": 33,
+      "time_window_ms": [
+        4603,
+        5243
+      ],
+      "duration_ms": 640,
+      "line_mask": 24,
+      "line_error": 0,
+      "line_valid": 1,
+      "yaw_improved_from_x10": -100,
+      "yaw_at_terminal_x10": -77
+    },
+    "terminal_sample": {
+      "time_ms": 5243,
+      "left_target_mmps": 77,
+      "right_target_mmps": 83,
+      "left_speed_mmps": 60,
+      "right_speed_mmps": 68,
+      "left_pwm": 95,
+      "right_pwm": 91,
+      "count_diff": 43,
+      "line_error": 0,
+      "line_mask": 24,
+      "line_valid": 1,
+      "yaw_x10": -77,
+      "corner_count": 0
+    }
+  },
+  "diagnosis": "Guard6 did not lose the line and did not reach a corner. Its fixed recovery arc drove past the useful heading, but the sensor sequence still improved from error 11 to 6 to 2 to 0. The vehicle then remained on centered mask 24/error 0 for the final 33 telemetry samples, and yaw was recovering from -10.0 to -7.7 degrees when the fixed 2.5 second timer stopped the run. This is a false abort caused by recovery state and completion semantics, not evidence of line loss or insufficient PWM authority.",
+  "pwm_decision": "Do not add another blind PWM boost for this failure. Peak outputs were only 153/132 against the closed-loop limit of 500, both encoders continued reporting motion, and the terminal condition was the fixed recovery timer. Keep the existing wheel PI and collect stable edge evidence before changing load compensation.",
+  "parameters_saved_by_failed_run": false,
+  "line_ab_started": false,
+  "rollback_confirmation": {
+    "profile": 1,
+    "SYNC": 500,
+    "BIAS": 80,
+    "GSTART": 10,
+    "LINEKP": 6750,
+    "LINEKD": 2000,
+    "TURNANGLE": 900,
+    "TURNFAST": 185,
+    "TURNSLOW": 140,
+    "TURNMARGIN": 180,
+    "TURNEXIT": 140,
+    "TURNDIST": 98
+  },
+  "corrective_direction": "Replace the single fixed-time recovery with a sensor-first two-phase SEEK then SETTLE recovery. Continue while valid-line error or centered-line yaw is making real progress; finish after 10 centered confirmations. Retain stops for true line loss, stall, hard yaw, or sustained no progress combined with large travel or yaw.",
+  "implemented_corrective_firmware": {
+    "guard_version": 7,
+    "firmware_file": "Debug/pid_lab_mspm0.hex",
+    "archive_file": "Debug/pid_lab_mspm0_guard7_progress_recovery_20260716.hex",
+    "size_bytes": 115526,
+    "sha256": "FE2B03B21D8FF85442C41C2CD1356290D7C1C8EAE67B6FBC27570AF1BFF06622",
+    "recovery_model": "SEEK_THEN_SETTLE_WITH_PROGRESS_WATCHDOG",
+    "recovery_speed_mmps": 80,
+    "seek_line_turn_limit_mmps": 45,
+    "seek_total_turn_limit_mmps": 60,
+    "settle_line_turn_limit_mmps": 20,
+    "settle_total_turn_limit_mmps": 30,
+    "settle_stale_boost_line_turn_limit_mmps": 30,
+    "settle_stale_boost_total_turn_limit_mmps": 45,
+    "seek_stale_boost_line_turn_limit_mmps": 60,
+    "seek_stale_boost_total_turn_limit_mmps": 75,
+    "enter_error": 11,
+    "seek_to_settle_error": 6,
+    "center_complete_error": 2,
+    "entry_confirmation_samples": 3,
+    "phase_confirmation_samples": 3,
+    "center_confirmation_samples": 10,
+    "progress_stale_ms": 1200,
+    "no_progress_ms": 1500,
+    "no_progress_travel_mm": 300,
+    "no_progress_yaw_x10": 200,
+    "hard_yaw_x10": 250,
+    "exit_ramp_ms": 300,
+    "guard6_rollback_file": "Debug/pid_lab_mspm0_guard6_capture_align_20260716.hex",
+    "guard6_rollback_sha256": "D08A499C30243324D3167B5760725A28E71AFAE11378F41648BFF0AC463AD873",
+    "status": "built_host_tested_and_archived_not_yet_vehicle_tested"
+  },
+  "host_verification": {
+    "unit_tests": 55,
+    "unit_test_result": "passed",
+    "python_compile_result": "passed",
+    "firmware_warning_policy": "-Werror",
+    "firmware_build_result": "passed_without_warnings"
+  },
+  "load_metadata_file": "load_metadata.json",
+  "protocol_trace_file": "protocol_trace.log"
+}

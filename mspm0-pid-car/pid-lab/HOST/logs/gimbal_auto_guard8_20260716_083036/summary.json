@@ -1,0 +1,32 @@
+{
+  "started_at_local": "2026-07-16T08:30:36",
+  "mode": "GIMBAL Guard8 first vehicle attempt",
+  "requested_speed_mmps": 120,
+  "firmware_file": "Debug/pid_lab_mspm0.hex",
+  "firmware_sha256": "132F616C025C352AF4809C2E3EE649D737AD97669A1BBEE6F1061CEC4913020D",
+  "guard_version": 8,
+  "result": "host_worker_startup_race_truncated_telemetry_before_scoring",
+  "recorded_evidence": {
+    "last_mcu_time_ms": 440,
+    "telemetry_samples": 22,
+    "square_state": 0,
+    "corner_count": 0,
+    "line_mask": 24,
+    "line_valid": 1,
+    "line_error": 0,
+    "yaw_x10": 0,
+    "turn_events": 0,
+    "online_candidate_sets": 0,
+    "save_commands": 0,
+    "rollback_recorded": false
+  },
+  "evidence_limit": "The host closed the serial connection before the worker completed. The trace ends during the startup ramp and does not contain the later straight or first turn.",
+  "user_observation_after_trace_loss": "The vehicle continued with snake-like motion, over-rotated at the first counter-clockwise corner, reached the starting straight, followed it in the reverse direction for a short distance, and then stopped.",
+  "diagnosis": {
+    "host": "The CLI checked tuner.running before the worker set it true, exited, and closed the serial link while the firmware had already accepted SQUARE.",
+    "firmware_pending": "The outgoing-line gate still needs a signed CCW yaw window, mandatory RIGHT_DEPART-to-GAP-to-LEFT_ENTRY provenance, a maximum travel gate, and capture continuity checks so a later encounter with the original edge cannot be accepted."
+  },
+  "save_status": "NO SAVE",
+  "current_status": "FAILED CHECKPOINT; DO NOT CONTINUE VEHICLE TESTING UNTIL TURN GATE IS FIXED",
+  "host_race_fix": "HOST/pid_lab_cli.py now waits for and joins the actual worker thread, drains final status, and reports missing COMPLETE/FAILED explicitly."
+}

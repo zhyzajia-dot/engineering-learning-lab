@@ -30,6 +30,12 @@
 #define IMU_STARTUP_DELAY_MS      5000U
 /* 连续失败达到此次数才判定 IMU 离线，过滤偶发 I2C 干扰。 */
 #define IMU_FAILURE_LIMIT            4U
+/* 模块偶发会返回一帧数值合法但完全错误的 0°。正常10 ms采样下，小车不
+ * 可能单帧转过5°（等价500°/s）；按最短圆弧比较可同时正确处理
+ * +179°/-179°回绕。若真实航向本来就在0°附近，可能接受的误差也被限制
+ * 在5°以内，不会再产生100°级的错误相对转角。 */
+#define IMU_MAX_YAW_STEP_X10        50
+#define IMU_RECOVERY_CONFIRM_FRAMES   3U
 
 /* 最近一次读取是否成功 */
 static uint8_t g_ready = 0U;
@@ -39,6 +45,10 @@ static uint32_t g_okCount = 0U;
 static uint32_t g_errorCount = 0U;
 /* 连续失败计数；成功读取一帧后立即清零。 */
 static uint8_t g_consecutiveErrors = 0U;
+/* Transport gaps can hide real movement between two accepted yaw frames. */
+static uint8_t g_transportGapFrames = 0U;
+static int16_t g_recoveryCandidateX10 = 0;
+static uint8_t g_recoveryCount = 0U;
 /* 当前 yaw，单位 0.1° */
 static int16_t g_yawX10 = 0;
 /* 相对参考点（IMU_BeginRelativeYaw() 时记录的 yaw） */
@@ -54,6 +64,30 @@ static int16_t clamp_angle_delta_x10(int16_t value)
     while (value > 1800) value = (int16_t)(value - 3600);
     while (value < -1800) value = (int16_t)(value + 3600);
     return value;
+}
+
+static uint8_t imu_recovery_candidate_is_confirmed(int16_t candidateYawX10)
+{
+    int16_t recoveryDelta = clamp_angle_delta_x10(
+        (int16_t)(candidateYawX10 - g_recoveryCandidateX10));
+
+    if ((g_recoveryCount != 0U) &&
+        (recoveryDelta <= IMU_MAX_YAW_STEP_X10) &&
+        (recoveryDelta >= -IMU_MAX_YAW_STEP_X10)) {
+        g_recoveryCandidateX10 = candidateYawX10;
+        if (g_recoveryCount < IMU_RECOVERY_CONFIRM_FRAMES) {
+            g_recoveryCount++;
+        }
+    } else {
+        g_recoveryCandidateX10 = candidateYawX10;
+        g_recoveryCount = 1U;
+    }
+
+    if (g_recoveryCount >= IMU_RECOVERY_CONFIRM_FRAMES) {
+        g_recoveryCount = 0U;
+        return 1U;
+    }
+    return 0U;
 }
 
 /* 软件复位 I2C 控制器、清空两个 FIFO */
@@ -190,6 +224,9 @@ void IMU_Init(void)
     g_okCount = 0U;
     g_errorCount = 0U;
     g_consecutiveErrors = 0U;
+    g_transportGapFrames = 0U;
+    g_recoveryCandidateX10 = 0;
+    g_recoveryCount = 0U;
     g_yawX10 = 0;
     g_yawZeroX10 = 0;
     g_warmingUp = 1U;
@@ -225,6 +262,10 @@ void IMU_Task10ms(uint32_t nowMs)
 
     /* 读取失败：标记无效，累加错误计数 */
     if (imu_read_bytes(IMU_EULER_REG, buffer, IMU_EULER_LEN) == 0U) {
+        g_recoveryCount = 0U;
+        if (g_transportGapFrames < IMU_FAILURE_LIMIT) {
+            g_transportGapFrames++;
+        }
         imu_record_failure();
         return;
     }
@@ -234,11 +275,37 @@ void IMU_Task10ms(uint32_t nowMs)
     /* 拒绝 NaN 和明显超出物理意义的值（>±6.5 rad ≈ ±372°） */
     if ((yawRadians != yawRadians) ||
         (yawRadians < -6.5f) || (yawRadians > 6.5f)) {
+        g_transportGapFrames = 0U;
+        g_recoveryCount = 0U;
         imu_record_failure();
         return;
     }
 
-    g_yawX10 = rad_to_deg_x10(yawRadians);
+    {
+        int16_t candidateYawX10 = rad_to_deg_x10(yawRadians);
+
+        /* 第一帧之外必须满足时间连续性。这里不能简单拒绝 yaw==0，因为车头
+         * 真实经过0°时它完全合法；只拒绝相对上一可信帧不可能出现的大跳变。 */
+        if (g_okCount != 0U) {
+            int16_t delta = clamp_angle_delta_x10(
+                (int16_t)(candidateYawX10 - g_yawX10));
+            int16_t allowedStep = (int16_t)(
+                IMU_MAX_YAW_STEP_X10 *
+                (int16_t)(g_transportGapFrames + 1U));
+            if ((delta > allowedStep) || (delta < -allowedStep)) {
+                /* A rejected data outlier must not enlarge its own window. */
+                g_transportGapFrames = 0U;
+                if (imu_recovery_candidate_is_confirmed(
+                        candidateYawX10) == 0U) {
+                    imu_record_failure();
+                    return;
+                }
+            }
+        }
+        g_yawX10 = candidateYawX10;
+    }
+    g_transportGapFrames = 0U;
+    g_recoveryCount = 0U;
     g_consecutiveErrors = 0U;
     g_ready = 1U;
     /* 第一帧成功时把“参考点”初始化为当前 yaw */

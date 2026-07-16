@@ -1,0 +1,33 @@
+{
+  "port": "COM12",
+  "pwm": 120,
+  "baseline": {
+    "samples": 17,
+    "start_deg": 11.0,
+    "end_deg": 11.0,
+    "drift_deg": 0.0,
+    "span_deg": 0.2,
+    "max_step_deg": 0.1,
+    "rejected_frames": 17
+  },
+  "motors": {
+    "samples": 18,
+    "start_deg": 11.0,
+    "end_deg": 11.0,
+    "drift_deg": 0.0,
+    "span_deg": 0.0,
+    "max_step_deg": 0.0,
+    "rejected_frames": 24
+  },
+  "after": {
+    "samples": 17,
+    "start_deg": 11.0,
+    "end_deg": 11.0,
+    "drift_deg": 0.0,
+    "span_deg": 0.0,
+    "max_step_deg": 0.0,
+    "rejected_frames": 17
+  },
+  "pwm_timeout_seen": true,
+  "final_stop_confirmed": true
+}

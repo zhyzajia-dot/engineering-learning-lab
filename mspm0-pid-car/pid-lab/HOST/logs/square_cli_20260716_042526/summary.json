@@ -1,0 +1,79 @@
+{
+  "started_at_local": "2026-07-16T04:25:26",
+  "mode": "GIMBAL guard-version-4 qualification square",
+  "requested_speed_mmps": 120,
+  "requested_laps": 1,
+  "firmware_sha256": "A3B9D7D8D61834A956A17A690A26231C1AC6D2E34B8ABFD7153BB071AFE1FF1A",
+  "guard_version": 4,
+  "runtime_profile": 1,
+  "runtime_parameters": {
+    "SYNC": 500,
+    "BIAS": 80,
+    "GSTART": 10,
+    "LINEKP": 3000,
+    "LINEKD": 800,
+    "TURNANGLE": 900,
+    "TURNFAST": 150,
+    "TURNSLOW": 100,
+    "TURNMARGIN": 300,
+    "TURNEXIT": 100,
+    "TURNDIST": 98
+  },
+  "result": "stopped_by_overconservative_host_outer-line_guard",
+  "host_terminal_report": "HOST SQUARE ERROR,GIMBAL STARTUP ESCAPE GUARD",
+  "physical_observation": {
+    "source": "user",
+    "description_zh": "一启动车辆向左，随后停车；用户没有移动小车，黑线仍在传感器下，第6/7路指示灯仍亮。"
+  },
+  "first_edge_evidence": {
+    "samples": 120,
+    "time_window_ms": [
+      20,
+      2400
+    ],
+    "line_valid_samples": 120,
+    "first_right_encoder_pulse_ms": 60,
+    "first_left_encoder_pulse_ms": 680,
+    "breakaway_delay_difference_ms": 620,
+    "line_mask_timeline": [
+      {
+        "time_ms": 20,
+        "mask": 24,
+        "line_error": 0
+      },
+      {
+        "time_ms": 1480,
+        "mask": 16,
+        "line_error": 2
+      },
+      {
+        "time_ms": 1680,
+        "mask": 48,
+        "line_error": 6
+      },
+      {
+        "time_ms": 2140,
+        "mask": 32,
+        "line_error": 11
+      },
+      {
+        "time_ms": 2280,
+        "mask": 96,
+        "line_error": 23
+      }
+    ],
+    "maximum_yaw_x10": 71,
+    "maximum_yaw_time_ms": 2040,
+    "yaw_x10_at_last_sample": 54,
+    "maximum_target_delta_mmps": 70,
+    "minimum_count_diff": -45,
+    "corner_count": 0
+  },
+  "guard_evidence": "At 2280, 2300 and 2320 ms the valid mask was 96 and line_error was 23, so the GUARD4 host threshold stopped the run. No sample lost the line. The firmware 12 degree heading guard and the 160 mm/s target-delta guard did not trigger.",
+  "diagnosis": "The vehicle was already recovering when the host stopped it: yaw fell from 7.1 degrees at 2040 ms to 5.4 degrees at 2400 ms, and the measured left wheel had begun overtaking the right wheel. GUARD4 incorrectly treated the still-valid 6/7-sensor mask as an immediate escape. A second bottleneck was that the encoder-derived mechanical trim had grown to roughly 31 mm/s while mechanical trim and grayscale steering shared the same 35 mm/s total envelope, leaving almost no independent line-recovery authority.",
+  "parameters_saved_by_failed_run": false,
+  "rollback_confirmation": "STOP was confirmed and the saved GIMBAL GSTART=10, LINEKP=6750, LINEKD=2000 and V4 turn values were restored in RAM.",
+  "corrective_action": "GUARD5 classifies valid outer line as RECOVER rather than STOP, lowers common speed to 80 mm/s during recovery, separates mechanical, IMU-heading and grayscale steering budgets, raises the bounded recovery turn envelope to 60 mm/s, adds per-wheel adaptive breakaway PWM, uses a 1.0 second GIMBAL launch ramp, and restores learned GIMBAL wheel-PI load compensation after each turn. The host hard guard now reserves immediate stopping for sustained invalid line, the outermost hard error, or very large yaw.",
+  "load_metadata_file": "load_metadata.json",
+  "protocol_trace_file": "protocol_trace.log"
+}

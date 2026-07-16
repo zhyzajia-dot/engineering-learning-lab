@@ -5,18 +5,47 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $Root = (Resolve-Path $PSScriptRoot).Path
-$Sdk = 'C:\ti\mspm0_sdk_2_10_00_04'
-$SysConfig = 'C:\ti\sysconfig_1.26.2\sysconfig_cli.bat'
-$Compiler = 'C:\ti\ti_cgt_arm_llvm_4.0.2.LTS\bin\tiarmclang.exe'
-$HexTool = 'C:\ti\ti_cgt_arm_llvm_4.0.2.LTS\bin\tiarmhex.exe'
 $Build = Join-Path $Root 'tmp\build_hex'
 Set-Location $Root
 
-foreach ($tool in @($SysConfig, $Compiler, $HexTool)) {
-    if (-not (Test-Path -LiteralPath $tool)) {
-        throw "Missing build tool: $tool"
+function Find-FirstExistingPath {
+    param(
+        [string]$Description,
+        [string[]]$Candidates
+    )
+
+    foreach ($candidate in $Candidates) {
+        if ($candidate -and (Test-Path -LiteralPath $candidate)) {
+            return (Resolve-Path -LiteralPath $candidate).Path
+        }
     }
+
+    throw "Missing $Description. Checked: $($Candidates -join ', ')"
 }
+
+$sdkSearch = @(
+    $env:COM_TI_MSPM0_SDK_INSTALL_DIR,
+    'C:\ti\mspm0_sdk_2_10_00_04',
+    'F:\MSPM0SDK\mspm0_sdk_2_10_00_04'
+)
+$sysConfigSearch = @(
+    'C:\ti\sysconfig_1.26.2\sysconfig_cli.bat',
+    'F:\TICCS\ccs\utils\sysconfig_1.27.0\sysconfig_cli.bat'
+)
+$compilerSearch = @(
+    'C:\ti\ti_cgt_arm_llvm_4.0.2.LTS\bin\tiarmclang.exe',
+    'F:\TICCS\ccs\tools\compiler\ti-cgt-armllvm_4.0.4.LTS\bin\tiarmclang.exe'
+)
+
+$Sdk = Find-FirstExistingPath 'MSPM0 SDK' $sdkSearch
+$SysConfig = Find-FirstExistingPath 'SysConfig CLI' $sysConfigSearch
+$Compiler = Find-FirstExistingPath 'TI ARM Clang compiler' $compilerSearch
+$compilerBin = Split-Path -Parent $Compiler
+$compilerRoot = Split-Path -Parent $compilerBin
+$HexTool = Find-FirstExistingPath 'TI ARM hex converter' @(
+    (Join-Path $compilerBin 'tiarmhex.exe'),
+    'C:\ti\ti_cgt_arm_llvm_4.0.2.LTS\bin\tiarmhex.exe'
+)
 
 New-Item -ItemType Directory -Force -Path $Build | Out-Null
 $outputParent = Split-Path -Parent $OutputHex
@@ -39,13 +68,14 @@ $includes = @(
     '-I.\SERIAL',
     '-I.\LAB',
     '-I.\MPU',
+    '-I.\POWER',
     "-I$Sdk\source\third_party\CMSIS\Core\Include",
     "-I$Sdk\source"
 )
 $flags = @(
     '@.\tmp\syscfg\device.opt',
     '-O0', '-gdwarf-3', '-mcpu=cortex-m0plus', '-march=thumbv6m',
-    '-mfloat-abi=soft', '-mthumb', '-Wall', '-Wextra'
+    '-mfloat-abi=soft', '-mthumb', '-Wall', '-Wextra', '-Werror'
 )
 foreach ($define in $Defines) {
     $flags += "-D$define"
@@ -57,6 +87,7 @@ $sources = @(
     'SERIAL\serial.c',
     'SENSOR\sensor.c',
     'MPU\imu.c',
+    'POWER\power_monitor.c',
     'LAB\lab_ctrl.c',
     'tmp\syscfg\ti_msp_dl_config.c'
 )
@@ -84,7 +115,7 @@ $xmlFile = Join-Path $Build 'pid_lab_mspm0_linkInfo.xml'
 & $Compiler '-mcpu=cortex-m0plus' '-march=thumbv6m' '-mfloat-abi=soft' '-mthumb' @objects `
     (Join-Path $Root 'tmp\syscfg\device_linker.cmd') `
     (Join-Path $Root 'tmp\syscfg\device.cmd.genlibs') `
-    "-L$Sdk\source" '-LC:\ti\ti_cgt_arm_llvm_4.0.2.LTS\lib' '-llibc.a' '-Wl,-c' `
+    "-L$Sdk\source" "-L$compilerRoot\lib" '-llibc.a' '-Wl,-c' `
     "-Wl,-m,$mapFile" "-Wl,--xml_link_info=$xmlFile" '-o' $outFile
 if ($LASTEXITCODE -ne 0) { throw 'Link failed' }
 

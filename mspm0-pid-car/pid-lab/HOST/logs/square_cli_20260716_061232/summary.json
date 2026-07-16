@@ -1,0 +1,129 @@
+{
+  "started_at_local": "2026-07-16T06:12:32",
+  "mode": "GIMBAL GUARD5 exit6 qualification square",
+  "requested_speed_mmps": 120,
+  "requested_laps": 1,
+  "firmware_sha256": "395F634491880E4124BBEB00CC89C0D6B2436CB0E0E627C5956DB02829A6036A",
+  "guard_version": 5,
+  "runtime_profile": 1,
+  "runtime_parameters": {
+    "LKP": 350,
+    "LKI": 100,
+    "RKP": 500,
+    "RKI": 350,
+    "LFF": 460,
+    "RFF": 437,
+    "LMIN": 32,
+    "RMIN": 26,
+    "SYNC": 500,
+    "BIAS": 80,
+    "GSTART": 10,
+    "LINEKP": 3000,
+    "LINEKD": 800,
+    "TURNANGLE": 900,
+    "TURNFAST": 150,
+    "TURNSLOW": 100,
+    "TURNMARGIN": 300,
+    "TURNEXIT": 100,
+    "TURNDIST": 98
+  },
+  "result": "first_edge_passed_then_first_turn_exit_failed",
+  "firmware_terminal_report": "SQUARE ERROR,LINE NOT CAPTURED",
+  "physical_observation_after_run": null,
+  "first_edge_evidence": {
+    "samples": 499,
+    "time_window_ms": [
+      20,
+      9980
+    ],
+    "line_valid_samples": 499,
+    "invalid_line_samples": 0,
+    "maximum_absolute_line_error": 6,
+    "steady_mean_absolute_line_error_after_1s": 2.03,
+    "steady_p95_absolute_line_error_after_1s": 6,
+    "steady_actual_mean_speed_mmps": 117.9,
+    "minimum_yaw_x10": -47,
+    "maximum_yaw_x10": 19,
+    "recovery_entered": false
+  },
+  "first_turn_evidence": {
+    "corner_detected_ms": 10000,
+    "approach_end_ms": 10060,
+    "fast_to_slow_ms": 10660,
+    "fast_to_slow_yaw_x10": 503,
+    "fast_to_slow_travel_mm": 76,
+    "outer_line_timeline": [
+      {
+        "time_ms": 10580,
+        "yaw_x10": 414,
+        "travel_mm": 62,
+        "mask": 48
+      },
+      {
+        "time_ms": 10700,
+        "yaw_x10": 541,
+        "travel_mm": 81,
+        "mask": 32
+      },
+      {
+        "time_ms": 10740,
+        "yaw_x10": 576,
+        "travel_mm": 87,
+        "mask": 96
+      },
+      {
+        "time_ms": 10820,
+        "yaw_x10": 637,
+        "travel_mm": 98,
+        "mask": 64
+      }
+    ],
+    "exit_entry_ms": 10840,
+    "exit_entry_yaw_x10": 651,
+    "exit_entry_travel_mm": 101,
+    "exit_entry_mask": 64,
+    "turn_direction": "counterclockwise_correct"
+  },
+  "exit_evidence": {
+    "samples": 40,
+    "duration_ms": 780,
+    "line_mask": 64,
+    "line_error": 36,
+    "line_valid_after_transition": true,
+    "left_target_mean_mmps": 131.6,
+    "right_target_mean_mmps": 63.4,
+    "left_speed_mean_mmps": 36.42,
+    "right_speed_mean_mmps": 46.85,
+    "center_confirmation_samples": 0
+  },
+  "diagnosis": "The exit6 change solved the previous recovery boundary: this run never entered RECOVER and followed the entire first edge with low error. The first turn then treated any valid outer line after 65 degrees as a completed capture and entered EXIT at mask 64/error 36. EXIT immediately reversed the left wheel from turn-backward to forward closed-loop, but the A-phase-only encoder reports pulse magnitude without direction, wheel PI had been reset, the actual left speed remained below the right speed despite the opposite target ordering, and the line never moved off sensor 7 before the fixed 800 ms EXIT timeout.",
+  "parameters_saved_by_failed_run": false,
+  "line_ab_started": false,
+  "rollback_confirmation": {
+    "profile": 1,
+    "SYNC": 500,
+    "BIAS": 80,
+    "GSTART": 10,
+    "LINEKP": 6750,
+    "LINEKD": 2000,
+    "TURNANGLE": 900,
+    "TURNFAST": 185,
+    "TURNSLOW": 140,
+    "TURNMARGIN": 180,
+    "TURNEXIT": 140,
+    "TURNDIST": 98
+  },
+  "corrective_direction": "Do not tune LINEKP/LINEKD for this failure. Replace the outer-line-is-complete rule with a dedicated GIMBAL capture/alignment phase that records first-seen yaw/mask/travel, brakes and clears unsigned reverse-speed residue, restores or re-arms heavy-load wheel compensation, actively centers the valid line with bounded adaptive authority, records center yaw/travel, and only then completes and learns the turn.",
+  "implemented_corrective_firmware": {
+    "guard_version": 6,
+    "firmware_file": "Debug/pid_lab_mspm0.hex",
+    "archive_file": "Debug/pid_lab_mspm0_guard6_capture_align_20260716.hex",
+    "size_bytes": 112581,
+    "sha256": "D08A499C30243324D3167B5760725A28E71AFAE11378F41648BFF0AC463AD873",
+    "direct_rollback_file": "Debug/pid_lab_mspm0_pre_gimbal_turn_capture_20260716.hex",
+    "direct_rollback_sha256": "395F634491880E4124BBEB00CC89C0D6B2436CB0E0E627C5956DB02829A6036A",
+    "status": "built_and_host_tested_not_yet_vehicle_tested"
+  },
+  "load_metadata_file": "load_metadata.json",
+  "protocol_trace_file": "protocol_trace.log"
+}

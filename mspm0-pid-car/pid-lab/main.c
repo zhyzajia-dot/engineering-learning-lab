@@ -21,12 +21,16 @@
 #include "lab_ctrl.h"
 #include "sensor.h"
 #include "imu.h"
+#include "power_monitor.h"
 
 #include <stdint.h>
 
 /* 编码器任务保持 5 ms；共享 I2C 的灰度和 IMU 与 10 ms 控制周期对齐。 */
 #define ENCODER_TASK_PERIOD_MS  5U
 #define I2C_TASK_PERIOD_MS     10U
+#define POWER_TASK_PERIOD_MS   10U
+#define I2C_COLD_START_DELAY_MS 6000U
+#define I2C_RECOVERY_CLOCKS        9U
 
 /* Build-only diagnostic.  When enabled, the firmware scans all legal 7-bit
  * addresses once after the IMU startup delay and prints each address whose
@@ -116,6 +120,70 @@ static uint32_t millis(void)
     return g_msTick;
 }
 
+/*
+ * Cold-power recovery for the shared I2C bus.
+ *
+ * The IMU needs about five seconds after power is applied. Accessing the
+ * other device while the IMU is still starting can leave BUSBSY latched until
+ * the MCU is reset. Wait at the call site, then release SDA/SCL, clock out a
+ * possible unfinished target transfer, create a STOP, and reinitialize I2C1.
+ *
+ * GPIO never drives either line high: output enabled means low, output
+ * disabled means released to the existing 3.3 V pull-ups.
+ */
+static void i2c_bus_recover_and_reinit(void)
+{
+    uint8_t pulse;
+
+    DL_I2C_disableController(I2C_BUS_INST);
+    DL_I2C_resetControllerTransfer(I2C_BUS_INST);
+    DL_I2C_flushControllerTXFIFO(I2C_BUS_INST);
+    DL_I2C_flushControllerRXFIFO(I2C_BUS_INST);
+
+    DL_GPIO_initDigitalOutputFeatures(GPIO_I2C_BUS_IOMUX_SCL,
+        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
+        DL_GPIO_DRIVE_STRENGTH_LOW, DL_GPIO_HIZ_DISABLE);
+    DL_GPIO_initDigitalOutputFeatures(GPIO_I2C_BUS_IOMUX_SDA,
+        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
+        DL_GPIO_DRIVE_STRENGTH_LOW, DL_GPIO_HIZ_DISABLE);
+
+    /* Prepare low output latches, but initially release both wires. */
+    DL_GPIO_clearPins(GPIO_I2C_BUS_SCL_PORT, GPIO_I2C_BUS_SCL_PIN);
+    DL_GPIO_clearPins(GPIO_I2C_BUS_SDA_PORT, GPIO_I2C_BUS_SDA_PIN);
+    DL_GPIO_disableOutput(GPIO_I2C_BUS_SCL_PORT, GPIO_I2C_BUS_SCL_PIN);
+    DL_GPIO_disableOutput(GPIO_I2C_BUS_SDA_PORT, GPIO_I2C_BUS_SDA_PIN);
+    delay_cycles(CPUCLK_FREQ / 100000U);
+
+    for (pulse = 0U; pulse < I2C_RECOVERY_CLOCKS; pulse++) {
+        DL_GPIO_enableOutput(GPIO_I2C_BUS_SCL_PORT, GPIO_I2C_BUS_SCL_PIN);
+        delay_cycles(CPUCLK_FREQ / 200000U);
+        DL_GPIO_disableOutput(GPIO_I2C_BUS_SCL_PORT, GPIO_I2C_BUS_SCL_PIN);
+        delay_cycles(CPUCLK_FREQ / 200000U);
+    }
+
+    /* STOP: SDA low while SCL is released, followed by SDA release. */
+    DL_GPIO_enableOutput(GPIO_I2C_BUS_SDA_PORT, GPIO_I2C_BUS_SDA_PIN);
+    delay_cycles(CPUCLK_FREQ / 200000U);
+    DL_GPIO_disableOutput(GPIO_I2C_BUS_SDA_PORT, GPIO_I2C_BUS_SDA_PIN);
+    delay_cycles(CPUCLK_FREQ / 100000U);
+
+    DL_GPIO_initPeripheralInputFunctionFeatures(
+        GPIO_I2C_BUS_IOMUX_SDA, GPIO_I2C_BUS_IOMUX_SDA_FUNC,
+        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
+        DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
+    DL_GPIO_initPeripheralInputFunctionFeatures(
+        GPIO_I2C_BUS_IOMUX_SCL, GPIO_I2C_BUS_IOMUX_SCL_FUNC,
+        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
+        DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
+    DL_GPIO_enableHiZ(GPIO_I2C_BUS_IOMUX_SDA);
+    DL_GPIO_enableHiZ(GPIO_I2C_BUS_IOMUX_SCL);
+
+    DL_I2C_reset(I2C_BUS_INST);
+    DL_I2C_enablePower(I2C_BUS_INST);
+    delay_cycles(POWER_STARTUP_DELAY);
+    SYSCFG_DL_I2C_BUS_init();
+}
+
 #if (I2C_ADDRESS_SCAN_DIAG_ENABLE != 0)
 static uint8_t i2c_probe_address(uint8_t address)
 {
@@ -167,10 +235,13 @@ static void run_i2c_address_scan(void)
 {
     uint8_t address;
 
-    while (millis() < 6000U) {
+    while (millis() < I2C_COLD_START_DELAY_MS) {
         SERIAL_Task();
         watchdog_feed();
     }
+
+    i2c_bus_recover_and_reinit();
+    SERIAL_SendString("I2C_COLDSTART,READY\r\n");
 
     while (1) {
         SERIAL_SendString("I2C_SCAN,BEGIN\r\n");
@@ -199,6 +270,8 @@ int main(void)
     /* 编码器和共享 I2C 任务独立分频，避免无效占用总线。 */
     uint32_t lastEncoderTick = 0U;
     uint32_t lastI2cTick = 0U;
+    uint32_t lastPowerTick = 0U;
+    uint8_t i2cReady = 0U;
     /* 当前灰度传感器的快照（循迹算法使用） */
     SENSOR_Data_t sensor;
 
@@ -222,6 +295,7 @@ int main(void)
     SERIAL_Init();
     SENSOR_Init();
     IMU_Init();
+    POWER_Init();
     LAB_Init();
     watchdog_init();
 
@@ -245,8 +319,27 @@ int main(void)
             ENCODER_Task5ms();
         }
 
+        /* 冷上电先让两个模块稳定 6 秒，再恢复一次总线并启动读取。
+         * 不使用 GPIO DIN 或瞬时 BUSY 作为启动门槛：恢复时引脚处于
+         * 临时复用状态，这两个内部状态都可能与外部实际电平不同。 */
+        if ((i2cReady == 0U) &&
+            (millis() >= I2C_COLD_START_DELAY_MS)) {
+            i2c_bus_recover_and_reinit();
+            SENSOR_Init();
+            IMU_Init();
+            lastI2cTick = millis();
+            i2cReady = 1U;
+            SERIAL_SendString("I2C_COLDSTART,READY\r\n");
+        }
+
+        if ((millis() - lastPowerTick) >= POWER_TASK_PERIOD_MS) {
+            lastPowerTick = millis();
+            POWER_Task10ms();
+        }
+
         /* 灰度和 IMU 共用 I2C1，顺序访问并降到控制所需的 10 ms 周期。 */
-        if ((millis() - lastI2cTick) >= I2C_TASK_PERIOD_MS) {
+        if ((i2cReady != 0U) &&
+            ((millis() - lastI2cTick) >= I2C_TASK_PERIOD_MS)) {
             lastI2cTick = millis();
             SENSOR_ReadData(&sensor);
             IMU_Task10ms(lastI2cTick);

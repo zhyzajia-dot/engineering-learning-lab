@@ -1,0 +1,203 @@
+{
+  "started_at_local": "2026-07-16T07:37:22",
+  "mode": "GIMBAL GUARD7 one-placement qualification and autotune attempt",
+  "requested_speed_mmps": 120,
+  "requested_laps": 1,
+  "firmware_file": "Debug/pid_lab_mspm0_guard7_progress_recovery_20260716.hex",
+  "firmware_sha256": "FE2B03B21D8FF85442C41C2CD1356290D7C1C8EAE67B6FBC27570AF1BFF06622",
+  "guard_version": 7,
+  "runtime_profile": 1,
+  "runtime_parameters": {
+    "LKP": 350,
+    "LKI": 100,
+    "RKP": 500,
+    "RKI": 350,
+    "LFF": 460,
+    "RFF": 437,
+    "LMIN": 32,
+    "RMIN": 26,
+    "SYNC": 500,
+    "BIAS": 80,
+    "GSTART": 10,
+    "LINEKP": 3000,
+    "LINEKD": 800,
+    "TURNANGLE": 900,
+    "TURNFAST": 150,
+    "TURNSLOW": 100,
+    "TURNMARGIN": 300,
+    "TURNEXIT": 100,
+    "TURNDIST": 98
+  },
+  "result": "valid_line_snaking_then_angle_only_capture_in_gap_followed_by_true_line_loss",
+  "firmware_terminal_report": "SQUARE ERROR,LINE LOST",
+  "physical_observation": "The user reported snake-like motion from launch. At the first corner the turn was too large and the vehicle left the black line.",
+  "run_evidence": {
+    "telemetry_samples": 839,
+    "time_window_ms": [
+      20,
+      16791
+    ],
+    "corner_count": 0,
+    "parameters_saved_by_failed_run": false,
+    "line_ab_started": false
+  },
+  "first_straight_evidence": {
+    "samples": 701,
+    "time_window_ms": [
+      20,
+      14031
+    ],
+    "line_valid_samples": 701,
+    "invalid_line_samples": 0,
+    "mean_absolute_line_error": 5.136947218259629,
+    "p95_absolute_line_error": 11,
+    "minimum_yaw_x10": -173,
+    "maximum_yaw_x10": 63,
+    "incoming_yaw_at_turn_x10": -173,
+    "observed_line_masks": [
+      4,
+      8,
+      12,
+      16,
+      24,
+      32,
+      48,
+      51,
+      96
+    ],
+    "observed_line_errors": [
+      -12,
+      -11,
+      -6,
+      -2,
+      0,
+      2,
+      6,
+      11,
+      23
+    ],
+    "recovery_episode_count": 5,
+    "recovery_phase_message_count": 15,
+    "recovery_phase_messages": [
+      "SETTLE",
+      "SEEK",
+      "SETTLE",
+      "CENTER",
+      "SETTLE",
+      "CENTER",
+      "SETTLE",
+      "CENTER",
+      "SETTLE",
+      "SEEK",
+      "SETTLE",
+      "CENTER",
+      "SEEK",
+      "SETTLE",
+      "SEEK"
+    ],
+    "error_and_yaw_direction_changes": "Both line error and yaw repeatedly crossed direction during the same fully valid straight edge."
+  },
+  "turn_evidence": {
+    "turn_fast": {
+      "samples": 35,
+      "yaw_start_x10": 0,
+      "yaw_end_x10": 502
+    },
+    "turn_slow": {
+      "samples": 33,
+      "yaw_start_x10": 522,
+      "yaw_end_x10": 896
+    },
+    "reported_capture_event": {
+      "corner": 1,
+      "yaw_x10": 902,
+      "travel_mm": 142,
+      "line_mask": 0,
+      "line_error": 0,
+      "line_valid": 0,
+      "diagnosis": "Invalid angle-only capture: reaching the 90 degree target while mask was zero proved only that the vehicle was still in the gap."
+    },
+    "capture_brake": {
+      "samples": 7,
+      "yaw_start_x10": 902,
+      "yaw_end_x10": 916,
+      "valid_line_samples": 0
+    },
+    "capture_align": {
+      "samples": 60,
+      "time_window_ms": [
+        15611,
+        16791
+      ],
+      "valid_line_samples": 0,
+      "invalid_line_samples": 60,
+      "line_masks": [
+        0
+      ],
+      "line_errors": [
+        0
+      ],
+      "sustained_target_mmps": [
+        111,
+        89
+      ],
+      "sustained_target_samples": 59,
+      "travel_start_mm": 145,
+      "travel_end_mm": 217,
+      "additional_travel_mm": 72,
+      "yaw_start_x10": 911,
+      "yaw_end_x10": 728
+    }
+  },
+  "diagnosis": "Guard7 combined three steering owners on a valid straight edge: grayscale PD, IMU heading correction and SEEK/SETTLE recovery. The 701 fully valid samples, repeated recovery transitions and repeated sign reversals are consistent with those controllers fighting each other rather than with missing sensor feedback. At the corner, TURNANGLE incorrectly acted as a completion condition. The firmware reported capture at 90.2 degrees with mask 0, then CAPTURE_ALIGN drove forward without any valid line and inherited a straight-line left/right target imbalance. The final LINE LOST was a real safety stop and should remain.",
+  "rollback_after_failure": {
+    "method": "explicit acknowledged SET commands; no SAVE",
+    "profile": 1,
+    "LKP": 350,
+    "LKI": 100,
+    "RKP": 500,
+    "RKI": 350,
+    "LFF": 460,
+    "RFF": 437,
+    "LMIN": 32,
+    "RMIN": 26,
+    "SYNC": 500,
+    "BIAS": 80,
+    "GSTART": 10,
+    "LINEKP": 6750,
+    "LINEKD": 2000,
+    "TURNANGLE": 900,
+    "TURNFAST": 185,
+    "TURNSLOW": 140,
+    "TURNMARGIN": 180,
+    "TURNEXIT": 140,
+    "TURNDIST": 98
+  },
+  "corrective_architecture": {
+    "guard_version": 8,
+    "firmware_file": "Debug/pid_lab_mspm0.hex",
+    "archive_file": "Debug/pid_lab_mspm0_guard8_gray_online_20260716.hex",
+    "size_bytes": 108365,
+    "sha256": "132F616C025C352AF4809C2E3EE649D737AD97669A1BBEE6F1061CEC4913020D",
+    "straight_steering_owner": "GRAYSCALE_ONLY",
+    "capture_align_steering_owner": "GRAYSCALE_ONLY",
+    "valid_line_recovery_state_machine": "REMOVED",
+    "imu_straight_role": "OBSERVATION_SCORING_AND_25_DEGREE_HARD_GUARD_ONLY",
+    "line_control": "CONTINUOUS_ERROR_BASED_AUTHORITY_AND_COMMON_SPEED_SCHEDULING",
+    "turn_target_semantics": "90_DEGREES_STARTS_LOW_SPEED_SEARCH_BUT_DOES_NOT_COMPLETE_CAPTURE",
+    "capture_requirement": "CONTINUOUS_REAL_OUTGOING_LINE_EVIDENCE",
+    "retained_hard_guards": [
+      "true_line_loss",
+      "wheel_stall",
+      "straight_yaw_25_degrees",
+      "turn_yaw_115_degrees",
+      "turn_total_timeout_3.2_seconds"
+    ],
+    "host_online_tuning": "Begin bounded coordinate trials over LINEKP and LINEKD on the first stable straight edge in the same placement; immediately roll back worsening trials.",
+    "save_gate": "At least four valid TURN CENTER events plus at least two stable straight-edge validation windows, followed by one SAVE.",
+    "status": "built_candidate_not_yet_vehicle_tested"
+  },
+  "load_metadata_file": "load_metadata.json",
+  "turn_events_file": "turn_events.json",
+  "protocol_trace_file": "protocol_trace.log"
+}

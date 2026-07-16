@@ -1,0 +1,57 @@
+{
+  "started_at_local": "2026-07-16T03:24:58",
+  "mode": "GIMBAL conservative-bootstrap qualification square",
+  "requested_speed_mmps": 120,
+  "requested_laps": 1,
+  "firmware_sha256": "081E885F077932A3FD6999A4AC8C8C2A34BF5DE05E6C60FFF11840CE8698D7EC",
+  "guard_version": 2,
+  "runtime_profile": 1,
+  "runtime_parameters": {
+    "SYNC": 500,
+    "BIAS": 80,
+    "LINEKP": 3000,
+    "LINEKD": 800,
+    "TURNANGLE": 900,
+    "TURNFAST": 150,
+    "TURNSLOW": 100,
+    "TURNMARGIN": 300,
+    "TURNEXIT": 100,
+    "TURNDIST": 98
+  },
+  "result": "failed_safely",
+  "firmware_terminal_report": "SQUARE ERROR,LINE LOST",
+  "physical_observation": "Immediately after startup the car drove left and left the black line.",
+  "first_edge_evidence": {
+    "samples": 157,
+    "time_window_ms": [
+      20,
+      3141
+    ],
+    "last_centered_sample_ms": 1420,
+    "last_centered_count_diff": -11,
+    "first_noncenter_sample_ms": 1440,
+    "first_noncenter_mask": 16,
+    "first_noncenter_actual_speed_mmps": [
+      14,
+      60
+    ],
+    "first_far_error_sample_ms": 1880,
+    "first_invalid_line_sample_ms": 2560,
+    "minimum_count_diff": -66,
+    "maximum_target_delta_mmps": 70,
+    "valid_samples_after_1500_ms": 53,
+    "mean_absolute_line_error": 19.7358,
+    "p95_absolute_line_error": 36,
+    "far_error_ratio": 0.6415,
+    "mean_absolute_target_correction_mmps": 26.9245,
+    "maximum_absolute_target_correction_mmps": 35,
+    "mean_actual_left_minus_right_speed_mmps": -23.8868
+  },
+  "diagnosis": "The accepted GIMBAL straight identification used SYNC=500 and BIAS=80 to create asymmetric wheel targets, but the V4 LINE/SQUARE branch did not use SYNC or BIAS. While the sensor was still centered, the right wheel was already substantially faster and the encoder count difference moved negative. The line controller then applied the correct steering sign and reached its bounded correction, but it reacted only after the chassis had started escaping and the actual wheel response remained right-leading. No turn was entered.",
+  "line_autotune_started": false,
+  "parameters_saved_by_failed_run": false,
+  "rollback_confirmation": "STOP was sent and the saved GIMBAL parameters LINEKP=6750, LINEKD=2000, TURNFAST=185, TURNSLOW=140, TURNMARGIN=180, TURNEXIT=140 and TURNDIST=98 were restored in RAM.",
+  "corrective_action": "Guard version 3 applies a bounded encoder-derived startup wheel trim during the first edge, keeps the combined GIMBAL correction inside the existing safety envelope, exposes real straight-edge IMU yaw, adds a host startup escape guard, and preserves wheel PI continuity while LINEKP/LINEKD candidates are switched.",
+  "load_metadata_file": "load_metadata.json",
+  "protocol_trace_file": "protocol_trace.log"
+}

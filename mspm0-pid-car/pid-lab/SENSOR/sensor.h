@@ -34,6 +34,9 @@ uint8_t SENSOR_GetDiagCode(void);
 /* I2C 通信是否正常（最近一次帧是否成功） */
 uint8_t SENSOR_GetI2cOk(void);
 
+/* Line control may reuse the last good sample across a short I2C glitch. */
+uint8_t SENSOR_IsLineDataUsable(void);
+
 /* 当前识别到的传感器 I2C 地址（0 表示未识别） */
 uint8_t SENSOR_GetFoundAddr(void);
 

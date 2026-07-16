@@ -1,0 +1,68 @@
+{
+  "started_at_local": "2026-07-16T03:58:38",
+  "mode": "GIMBAL guard-version-3 qualification square",
+  "requested_speed_mmps": 120,
+  "requested_laps": 1,
+  "firmware_sha256": "F6D1D2AF4CF941D43CB766789014BC81390DB4A4FAEAC39210F0FCF6CB77AE33",
+  "guard_version": 3,
+  "runtime_profile": 1,
+  "runtime_parameters": {
+    "SYNC": 500,
+    "BIAS": 80,
+    "LINEKP": 3000,
+    "LINEKD": 800,
+    "TURNANGLE": 900,
+    "TURNFAST": 150,
+    "TURNSLOW": 100,
+    "TURNMARGIN": 300,
+    "TURNEXIT": 100,
+    "TURNDIST": 98
+  },
+  "result": "stopped_safely_by_host_startup_guard",
+  "host_terminal_report": "HOST SQUARE ERROR,GIMBAL STARTUP ESCAPE GUARD",
+  "physical_observation": null,
+  "post_stop_sensor_report": "SENSOR,OK,64,0,93,0,192",
+  "first_edge_evidence": {
+    "samples": 117,
+    "time_window_ms": [
+      20,
+      2340
+    ],
+    "first_encoder_pulse": {
+      "time_ms": 80,
+      "wheel": "left",
+      "count_diff": 1
+    },
+    "startup_target_bias_wrong_direction_window_ms": [
+      280,
+      1520
+    ],
+    "maximum_wrong_direction_target_turn_mmps": -4,
+    "last_centered_sample": {
+      "time_ms": 1640,
+      "targets_mmps": [
+        124,
+        116
+      ],
+      "actual_speed_mmps": [
+        57,
+        115
+      ],
+      "count_diff": -9,
+      "yaw_x10": 25
+    },
+    "first_noncenter_sample_ms": 1660,
+    "first_yaw_8deg_sample_ms": 1900,
+    "first_line_error_23_sample_ms": 2200,
+    "maximum_target_delta_mmps": 70,
+    "minimum_count_diff": -69,
+    "maximum_yaw_x10": 130
+  },
+  "guard_evidence": "The old host threshold required five consecutive first-edge samples with line_error >= 23 or abs(yaw) >= 12.0 degrees. The fifth unsafe sample was available at about 2280 ms and STOP was transmitted by 2300 ms. The line remained valid and no turn was entered.",
+  "diagnosis": "The sign of the encoder correction and the line controller was correct, but the absolute startup count difference was not a reliable learning input. A single early left encoder pulse made the trim negative and commanded the right target higher through most of the ramp. Once the right wheel truly accelerated, the trim had to cross zero after the 1500 ms gain reduction and reacted too late. By the time the total target correction reached its existing safety limit, the right wheel had already accumulated a large lead.",
+  "parameters_saved_by_failed_run": false,
+  "rollback_confirmation": "STOP was confirmed and the saved GIMBAL values SYNC=500, BIAS=80, LINEKP=6750, LINEKD=2000 and the V4 turn values were restored in RAM.",
+  "corrective_action": "Guard version 4 adds persistent GSTART feedforward, rearms encoder learning only after the base target reaches 80 mm/s, uses incremental counts with a minimum travel threshold, learns a new GSTART only after safely reaching the first corner, lowers the host yaw guard to 8 degrees for three samples, adds a 12 degree firmware first-edge guard, and applies the same guards to compact multi-lap A/B telemetry.",
+  "load_metadata_file": "load_metadata.json",
+  "protocol_trace_file": "protocol_trace.log"
+}

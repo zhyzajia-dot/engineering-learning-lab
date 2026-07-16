@@ -120,7 +120,8 @@ bool trackDiagnosticCommand(uint8_t value) {
 /* 验证来源、协议和长度，过滤重复包，再把载荷原样写入本端 UART。 */
 void onReceive(uint8_t *mac, uint8_t *data, uint8_t length) {
   if (!peerConfigured || memcmp(mac, kPeerMac, 6) != 0 ||
-      length < offsetof(BridgePacket, payload)) {
+      length < offsetof(BridgePacket, payload) ||
+      length > sizeof(BridgePacket)) {
     return;
   }
 

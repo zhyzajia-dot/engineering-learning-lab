@@ -1,0 +1,74 @@
+{
+  "started_at_local": "2026-07-16T02:59:01",
+  "mode": "GIMBAL guarded qualification square",
+  "requested_speed_mmps": 120,
+  "requested_laps": 1,
+  "firmware_sha256": "A6F47635F9BC3E75A77A86CF51AA93737C438109CA5CD65A3E14D2A91FD9FBAC",
+  "guard_version": 1,
+  "runtime_profile": 1,
+  "runtime_parameters": {
+    "SYNC": 500,
+    "BIAS": 80,
+    "LINEKP": 6750,
+    "LINEKD": 2000,
+    "TURNANGLE": 900,
+    "TURNFAST": 185,
+    "TURNSLOW": 140,
+    "TURNMARGIN": 180,
+    "TURNEXIT": 140,
+    "TURNDIST": 98
+  },
+  "result": "failed_safely",
+  "firmware_terminal_report": "SQUARE ERROR,LINE LOST",
+  "physical_observation": "Before the first corner the car oscillated left and right. It then turned too aggressively or entered the corner while already oscillating, left the black line, and stopped without repeating the previous 180 degree U-turn.",
+  "straight_edge_evidence": {
+    "scored_samples": 452,
+    "time_window_ms": [
+      1500,
+      10520
+    ],
+    "mean_absolute_line_error": 12.1438,
+    "p95_absolute_line_error": 23,
+    "far_error_ratio": 0.5553,
+    "mean_absolute_target_correction_mmps": 36.4712,
+    "maximum_absolute_target_correction_mmps": 45
+  },
+  "turn_evidence": {
+    "turn_fast_started_ms": 10600,
+    "turn_slow_started_ms": 11060,
+    "turn_slow_started_yaw_x10": 482,
+    "turn_slow_started_travel_mm": 73,
+    "next_edge_outer_masks": [
+      {
+        "time_ms": 11200,
+        "yaw_x10": 687,
+        "mask": 96
+      },
+      {
+        "time_ms": 11220,
+        "yaw_x10": 712,
+        "mask": 96
+      },
+      {
+        "time_ms": 11240,
+        "yaw_x10": 736,
+        "mask": 64
+      },
+      {
+        "time_ms": 11260,
+        "yaw_x10": 748,
+        "mask": 64
+      }
+    ],
+    "turn_exit_started_ms": 11380,
+    "turn_exit_yaw_x10": 904,
+    "turn_exit_travel_mm": 138,
+    "invalid_exit_samples": 30
+  },
+  "diagnosis": "This run was a guarded qualification, not LINEKP/LINEKD autotuning. The V4 gains saturated the new low-speed GIMBAL correction limit for much of the first edge, matching the observed snake motion. During the first corner the next edge was already visible on outer sensors at about 68.7 to 74.8 degrees, but guard version 1 only accepted the center sensors, so the state machine continued to about 90 degrees and entered EXIT with no line.",
+  "line_autotune_started": false,
+  "parameters_saved_by_failed_run": false,
+  "safety_action": "STOP sent; runtime turn parameters restored. The next firmware must use a conservative GIMBAL bootstrap and bounded outer-sensor line capture before another qualification.",
+  "load_metadata_file": "load_metadata.json",
+  "protocol_trace_file": "protocol_trace.log"
+}

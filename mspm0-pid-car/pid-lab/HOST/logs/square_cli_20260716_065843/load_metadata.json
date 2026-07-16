@@ -1,0 +1,22 @@
+{
+  "load_profile": "GIMBAL",
+  "gimbal_installed": true,
+  "gimbal_power_source": "separate_battery",
+  "gimbal_electrically_connected_to_drive_system": false,
+  "gimbal_powered_and_stabilized": true,
+  "vehicle_centered_before_run": true,
+  "pre_run_alignment": "user_confirmed_centered_on_black_line",
+  "center_of_gravity_qualitative": "center_forward",
+  "left_right_wheel_mechanical_resistance": "similar",
+  "base_mass_g": null,
+  "gimbal_mass_g": null,
+  "mounting_mass_g": null,
+  "total_mass_g": null,
+  "gimbal_cog_height_mm": null,
+  "gimbal_cog_forward_mm": null,
+  "gimbal_cog_left_mm": null,
+  "sensor_height_mm": null,
+  "drive_battery_voltage_v": null,
+  "battery_scale": "UNKNOWN",
+  "notes": "Heavy gimbal; user confirmed Guard6 firmware D08A...873 was flashed and the vehicle was centered on the counterclockwise square before the run. After the automatic stop, the user reported that the grayscale sensors were still over the black line; this agrees with the final telemetry mask 24/error 0. Unknown quantitative load, geometry, sensor-height and drive-battery measurements are intentionally null."
+}

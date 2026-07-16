@@ -1,0 +1,10 @@
+[
+  {
+    "event": "capture",
+    "corner": 1,
+    "yaw_x10": 902,
+    "travel_mm": 142,
+    "mask": 0,
+    "error": 0
+  }
+]

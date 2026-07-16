@@ -1,0 +1,46 @@
+{
+  "started_at_local": "2026-07-16T02:28:42",
+  "mode": "GIMBAL qualification square",
+  "requested_speed_mmps": 120,
+  "requested_laps": 1,
+  "firmware_sha256": "49FF43F7E841D8EE5C7A96FBEA22D37756908FCFDFFC19BCA26FA393677729F5",
+  "runtime_profile": 1,
+  "runtime_parameters": {
+    "SYNC": 500,
+    "BIAS": 80,
+    "LINEKP": 6750,
+    "LINEKD": 2000,
+    "TURNANGLE": 900,
+    "TURNFAST": 185,
+    "TURNSLOW": 140,
+    "TURNMARGIN": 180,
+    "TURNEXIT": 140,
+    "TURNDIST": 98
+  },
+  "result": "failed",
+  "firmware_terminal_report": "SQUARE ERROR,LINE LOST",
+  "physical_observation": "After the first corner the car continued turning to an approximately 180 degree U-turn. The user lifted the car and it then stopped.",
+  "timeline_evidence": {
+    "turn_state_started_ms": 10822,
+    "turn_exit_reached_ms": 11590,
+    "first_corner_completed_ms": 11730,
+    "turn_yaw_x10": 900,
+    "turn_travel_mm": 142,
+    "post_corner_target_example_mmps": [
+      20,
+      220
+    ],
+    "post_corner_target_delta_mmps": 200,
+    "post_corner_target_min_mmps": 20,
+    "post_corner_target_max_mmps": 220,
+    "post_corner_max_abs_line_error": 36,
+    "line_became_invalid_ms": 18984,
+    "line_lost_stop_ms": 19544
+  },
+  "diagnosis": "The first turn state exited at the 90 degree IMU target and recorded corner 1. The dangerous additional rotation occurred after transition back to SQUARE LINE, where the 120 mm/s V4 line controller repeatedly commanded near-pivot target splits. LINE LOST was the final consequence, not the initiating fault.",
+  "line_autotune_started": false,
+  "parameters_saved_by_failed_run": false,
+  "safety_action": "STOP sent; turn parameters restored in RAM; current unsafe qualification parameters must not be rerun.",
+  "load_metadata_file": "load_metadata.json",
+  "protocol_trace_file": "protocol_trace.log"
+}

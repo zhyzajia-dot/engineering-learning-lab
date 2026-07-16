@@ -10,7 +10,8 @@
 #define APP_CONFIG_H
 
 /* 这里只保存“首次启动或 Flash 无效”时使用的保底值。
- * 正常运行采用 Flash V2 中保存的实测参数；修改本文件不会覆盖已有 Flash。
+ * 正常运行采用 Flash V3 的 LIGHT/GIMBAL 独立档；旧 V1/V2 会在下次 SAVE
+ * 时迁移。修改本文件不会覆盖已有 Flash。
  * 若要让新默认值生效，需要擦除参数区或由上位机重新 SET 后 SAVE。 */
 
 /* ---------------------------------------------------------------
@@ -20,20 +21,20 @@
 /* 固定小数系数统一使用 x1000 缩放：例如 580 表示 0.580 */
 
 /* 左/右轮闭环比例增益 Kp（无单位，按 x1000 缩放） */
-#define LAB_DEFAULT_LEFT_KP_X1000       580
-#define LAB_DEFAULT_RIGHT_KP_X1000      580
+#define LAB_DEFAULT_LEFT_KP_X1000       350
+#define LAB_DEFAULT_RIGHT_KP_X1000      500
 
 /* 左/右轮闭环积分增益 Ki（无单位，按 x1000 缩放；0 表示纯 P 控制） */
-#define LAB_DEFAULT_LEFT_KI_X1000         0
-#define LAB_DEFAULT_RIGHT_KI_X1000        0
+#define LAB_DEFAULT_LEFT_KI_X1000       100
+#define LAB_DEFAULT_RIGHT_KI_X1000      350
 
 /* 左/右轮前馈增益 FF（按 x1000 缩放），把目标速度的一部分直接叠加到 PWM */
-#define LAB_DEFAULT_LEFT_FF_X1000       340
-#define LAB_DEFAULT_RIGHT_FF_X1000      340
+#define LAB_DEFAULT_LEFT_FF_X1000       460
+#define LAB_DEFAULT_RIGHT_FF_X1000      437
 
 /* 左/右轮的最小有效 PWM：低于这个值电机可能因摩擦无法启动 */
-#define LAB_DEFAULT_LEFT_MIN_PWM         45
-#define LAB_DEFAULT_RIGHT_MIN_PWM        45
+#define LAB_DEFAULT_LEFT_MIN_PWM         32
+#define LAB_DEFAULT_RIGHT_MIN_PWM        26
 
 /* ---------------------------------------------------------------
  * 直线同步外环（两侧轮差速补偿）
@@ -43,17 +44,17 @@
 #define LAB_DEFAULT_SYNC_KP_X1000      1000
 
 /* 左右轮目标计数器差，单位 1/10000；用于在线校正机械偏置 */
-#define LAB_DEFAULT_RIGHT_BIAS_MMPS      25
+#define LAB_DEFAULT_RIGHT_BIAS_MMPS      50
 
 /* ---------------------------------------------------------------
  * 循迹 PD 外环（基于 8 路灰度加权误差）
  * --------------------------------------------------------------- */
 
 /* 循迹 Kp：按 x1000 缩放的速度修正比例 */
-#define LAB_DEFAULT_LINE_KP_X1000       6000
+#define LAB_DEFAULT_LINE_KP_X1000       6750
 
 /* 循迹 Kd：按 x1000 缩放的速度修正微分项 */
-#define LAB_DEFAULT_LINE_KD_X1000       2500
+#define LAB_DEFAULT_LINE_KD_X1000       2000
 
 /* ---------------------------------------------------------------
  * 逆时针正方形跑图相关（方框模式）
@@ -76,6 +77,6 @@
 #define LAB_DEFAULT_TURN_EXIT_MMPS         140
 
 /* 转弯过程中按里程提前结束的阈值，单位 mm */
-#define LAB_DEFAULT_TURN_DISTANCE_MM        85
+#define LAB_DEFAULT_TURN_DISTANCE_MM        98
 
 #endif

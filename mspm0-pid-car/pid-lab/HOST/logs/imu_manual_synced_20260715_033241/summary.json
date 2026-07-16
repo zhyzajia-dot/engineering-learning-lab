@@ -1,0 +1,12 @@
+{
+  "samples": 168,
+  "baseline_start_deg": 125.7,
+  "baseline_end_deg": 125.9,
+  "baseline_span_deg": 0.3,
+  "post_cue_start_deg": 125.9,
+  "final_deg": 194.6,
+  "post_cue_rotation_deg": 68.7,
+  "max_step_deg": 8.3,
+  "rejected_frames": 215,
+  "output_dir": "F:\\engineering-learning-lab\\mspm0-pid-car\\pid-lab\\HOST\\logs\\imu_manual_synced_20260715_033241"
+}
