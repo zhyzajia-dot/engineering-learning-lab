@@ -17,3 +17,11 @@ Debug/*
 !Debug/pid_lab_mspm0_pre_adc_20260715.hex
 !Debug/pid_lab_mspm0_v4_turnguard.hex
 !Debug/pid_lab_mspm0_v4_exact.hex
+
+# Local console wrappers and failed process-launch probes are transient.
+# Evidence-bearing vehicle sessions are kept in their timestamped directories.
+HOST/logs/gimbal_auto_live_*/
+HOST/logs/guard8_live_*.stdout.log
+HOST/logs/guard8_live_*.stderr.log
+HOST/logs/start_process_*.stdout.log
+HOST/logs/start_process_*.stderr.log
