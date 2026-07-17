@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "profile": "GIMBAL",
+  "load": {
+    "heavy_gimbal_installed": true,
+    "gimbal_mass_g": null,
+    "total_vehicle_mass_g": null,
+    "mounting_mass_g": null
+  },
+  "power": {
+    "separate_gimbal_battery": true,
+    "electrical_connection_to_drive": false,
+    "gimbal_powered_and_stable": true,
+    "gimbal_attitude_stable": true,
+    "drive_battery_voltage_v": null
+  },
+  "geometry": {
+    "center_of_gravity_qualitative": "center_forward",
+    "center_of_gravity_mm": null,
+    "line_sensor_height_mm": null
+  },
+  "mechanical": {
+    "left_right_wheel_resistance": "similar"
+  },
+  "unknown_fields": [
+    "gimbal_mass_g",
+    "total_vehicle_mass_g",
+    "mounting_mass_g",
+    "drive_battery_voltage_v",
+    "center_of_gravity_mm",
+    "line_sensor_height_mm"
+  ],
+  "source": "user-confirmed qualitative facts; unknown values are intentionally null"
+}

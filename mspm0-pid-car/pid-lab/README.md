@@ -1,27 +1,32 @@
 # MSPM0 循迹小车：V4 基线与重云台适配交接
 
-> 更新时间：2026-07-16。新对话先完整阅读本文件，再查看源代码和保留日志。当前工作的唯一控制基线是 V4；不要恢复已经否决的中间循迹实验，也不要在没有实车证据时同时改轮速环、循迹环和转弯状态机。
+> 更新时间：2026-07-17。新对话先完整阅读本文件，再查看源代码和保留日志。当前工作的唯一控制基线是 V4；不要恢复已经否决的中间循迹实验，也不要在没有实车证据时同时改轮速环、循迹环和转弯状态机。
 
-## 0. 2026-07-16 换电脑交接：当前必须先停在这里
+## 0. 2026-07-17 最新交接：Guard9 已构建，等待首次受控实车验证
 
 本节是最新状态，优先级高于后文仍保留的历史过程说明。
 
+- 2026-07-17 最新实车日志确认首条直线在 `mask=0` 后仍等速前冲，旧版的 `100 mm/s` 首边限速和 `25°` 提前航向停车已撤回/放宽。当前候选恢复为 `120 mm/s` 首边速度、`500 ms` 起步斜坡、保留最后转向追回丢线，且 PID 差速上限回到可调范围；待烧录 `Debug/pid_lab_mspm0.hex` 与不可变归档 `Debug/pid_lab_mspm0_guard9_recovery_pid_20260717.hex` 均为 `109,196 B`，SHA-256 均为 `6BC9485047A9B100AE7E3450632F1C8508180D3CE5906B3C9581E1CBBE51F4D1`。旧版归档仅保留作对比，不要再烧录。
+- Guard9 不改 LIGHT、轮速 PI、PWM 和基本循迹 PD，只收紧 GIMBAL 转弯捕获并收窄重载直线差速：直线差速由原先最大 `±75` 改为 `±45 mm/s`，每周期变化限制为 `10 mm/s`；转弯仍使用有符号逆时针 yaw、IMU 失效/野点立即停车、强制 `RIGHT_DEPART → 连续 gap → LEFT_ENTRY`、左侧 0～2 路且 `error <= -6`、`75°～110°` 和 `0.75～1.8 × TURNDIST` 窗口，刹停/ALIGN 无线继续 fail-stop。
+- 历史正确序列 `mask1→3→2 @81.5°～88.7°`、`073722` 的 `90.2°/mask0`、单独 `mask24`、IMU 中途失效和 `160°` 再遇原边均已加入回归。`python -m unittest discover -s .\HOST -p "test_*.py"` 共 62 项通过；当前工程已通过 `-Wall -Wextra -Werror` 构建。冻结 LIGHT 工程也已重新构建并逐字节验证为原哈希 `E8EA86F3...A36A93`。
+- Guard9 目前是“软件检查通过、第三版待实车验证”的候选，不应称为最终成品。下一步先烧录当前 HEX，空闲时回读 `PROFILE=1 / FLASHVER=3 / GUARDVER=9`，再在可随时断电的封闭赛道上仅以 `120 mm/s` 运行一次 `gimbal-auto`；通过首边、至少四个真实 `TURN CENTER` 和最终直边验证后，主机才会执行唯一一次 `SAVE`。
+- 本次完整实车日志为 `HOST/logs/gimbal_auto_guard8_20260717_110537`：首边 541 帧全部有线，但 `|error|` 均值 `10.10`、P95 `23`、最大 `24`，yaw 摆动 `-23.8°～+11.8°`，目标多次达到 `140/20` 或 `20/140 mm/s`；首弯在 `74.2°/travel=138 mm/mask64` 看到右侧旧边，随后 `74.8°～82.4°` 全部 `mask=0`，没有任何左侧新边证据，最终按 `176 mm` 安全停车。没有候选保存、没有 `SAVE`；失败后的 GIMBAL RAM 已回滚。
+
 - 车辆已经由上位机明确发送 `STOP`，最后诊断为 `STATUS ... IDLE ... SAFE ... STBY,HIGH`。换电脑后不要直接发送任何运动命令。
-- 当前 `Debug/pid_lab_mspm0.hex` 与 `Debug/pid_lab_mspm0_guard8_gray_online_20260716.hex` 是同一份 Guard8 实车失败检查点，不是已经通过验收的重云台成品。两者均为 `108,365 B`，SHA-256 均为 `132F616C025C352AF4809C2E3EE649D737AD97669A1BBEE6F1061CEC4913020D`。
+- `Debug/pid_lab_mspm0_guard8_gray_online_20260716.hex` 仍保留为 Guard8 实车失败检查点，不是成品，也不应再烧录。它为 `108,365 B`，SHA-256 为 `132F616C025C352AF4809C2E3EE649D737AD97669A1BBEE6F1061CEC4913020D`。
 - 2026-07-16 08:30 的第一次 Guard8 运行暴露了上位机启动竞态：`start_gimbal_auto()` 创建线程后，CLI 曾在工作线程把 `running` 置真之前错误退出并关闭串口。固件已经收到 `SQUARE`，因此车辆继续自主运动，但主机日志只记录到 MCU `t=440 ms`。
 - 该短日志尚未到 `1400 ms` 评分门，也没有形成基线，没有发送任何在线候选 `SET`，没有进入日志可见的首弯，没有 `SAVE`，也没有完成失败回滚。不能把本轮表现称为“自动调参得到的结果”。
 - 用户在主机日志中断后观察到：车辆从起步开始仍呈蛇形；第一个逆时针弯转得过多，甚至转到起步直线并沿原路返回，走一会后停止。这是可靠的人工实车现象，但没有对应的完整串口遥测，必须如实区分。
-- CLI 生命周期竞态已经在 `HOST/pid_lab_cli.py` 修复：现在持有本次工作线程并等待 `join`，排空最终状态后才关闭串口；无 `COMPLETE/FAILED` 会明确报错，不再静默退出。`python -m unittest discover -s .\HOST -p "test_*.py"` 共 61 项通过。
-- 固件转弯门禁尚未修复，**禁止直接继续运行当前 Guard8**。当前代码仍可能在 IMU 失去可靠性后用里程降级，把后续重新遇到的原入边当作新出边；yaw 还被取绝对值而丢失转向方向；`CAPTURE_BRAKE` 后没有重新确认捕获线仍存在；`CAPTURE_ALIGN` 最多可在无有效线时继续前进约 1.2 秒。
-- 下一步只修转弯出边判定，不先改轮速 PI、PWM 或循迹 PD：
+- CLI 生命周期竞态已经在 `HOST/pid_lab_cli.py` 修复：现在持有本次工作线程并等待 `join`，排空最终状态后才关闭串口；无 `COMPLETE/FAILED` 会明确报错，不再静默退出。该修复当时 61 项测试通过；加入 Guard9 回归后当前共 62 项通过。
+- Guard8 的固件转弯门禁曾有四个缺口：IMU 失去可靠性后用里程降级、yaw 取绝对值、`CAPTURE_BRAKE` 后不重新确认线、`CAPTURE_ALIGN` 最多可在无线时继续前进约 1.2 秒。Guard9 已按以下边界修复，并保持轮速 PI、PWM 与循迹 PD 不变：
   1. GIMBAL 转弯过程中 IMU 一旦不可靠立即安全停止，不再用仅里程完成捕获；
   2. 使用有符号的逆时针 yaw 进度，候选角度限制在 `75°～110°`；
   3. 强制完整顺序 `RIGHT_DEPART → 连续 gap → LEFT_ENTRY`；
   4. `LEFT_ENTRY` 首次证据必须来自左侧 0～2 路且 `error <= -6`，单独 `mask=24/error=0` 不能建立新出边；
   5. 捕获里程限制约为 `0.75～1.8 × TURNDIST`；
   6. 刹停期间丢线不得进入向前 `CAPTURE_ALIGN`，ALIGN 无效线超过 `150～200 ms` 必须停止或回到慢转搜索。
-- 必补回归：历史正确序列 `mask1→3→2 @81.5°～88.7°` 必须允许捕获；`073722` 的 `90.2°/mask0` 必须拒绝；合成“右外→gap→无新线→160°～180°重新遇到原边”必须在捕获前停止；IMU 中途不可靠、单独 `mask24`、刹停时丢线都不得进入向前 ALIGN。
-- 设备当前 GIMBAL RAM 最后读回为：`SYNC=500 BIAS=80 GSTART=10 LINEKP=3000 LINEKD=800 TURNANGLE=927 TURNFAST=150 TURNSLOW=100 TURNMARGIN=300 TURNEXIT=100 TURNDIST=98 PROFILE=1 GUARDVER=8`。这些是未保存成功的临时/固件学习值，不是验收参数。换电脑或复位后必须重新 `PARAM` 回读，不能假设仍然存在。
+- 已补回归：历史正确序列 `mask1→3→2 @81.5°～88.7°` 允许捕获；`073722` 的 `90.2°/mask0` 被拒绝；合成“右外→gap→无新线→160°～180°重新遇到原边”在捕获前停止；IMU 中途不可靠、单独 `mask24`、刹停时丢线均不得进入向前 ALIGN。
+- 设备在烧录 Guard9 前的最后一次 GIMBAL RAM 读回为：`SYNC=500 BIAS=80 GSTART=10 LINEKP=3000 LINEKD=800 TURNANGLE=927 TURNFAST=150 TURNSLOW=100 TURNMARGIN=300 TURNEXIT=100 TURNDIST=98 PROFILE=1 GUARDVER=8`。这些是未保存成功的临时/固件学习值，不是验收参数；烧录或复位后必须重新 `PARAM` 回读，不能假设仍然存在。
 - 轻载 V4 基线没有改变：`pid_lab_mspm0_v4_turnguard.hex` SHA-256 为 `E8EA86F3A9CD9BA089644B90D8C7E6922221B08E38C6136FD7068A4648A36A93`；`pid_lab_mspm0_v4_exact.hex` 为 `39AB0AF11D68C6541B7C159AD4590EF7AFE632C9B79B4F9DA43B3ED5CF7B5AA1`。
 
 换电脑后的安全恢复顺序：
@@ -36,25 +41,29 @@ python .\HOST\pid_lab_cli.py ports
 python .\HOST\pid_lab_cli.py diagnose --port COM12
 ```
 
-在完成上述转弯门禁修改、测试、无警告构建、新 HEX 归档和 SHA-256 记录之前，不要再次运行 `gimbal-auto` 或 `square`。
+上述转弯门禁修改、测试、无警告构建、新 HEX 归档和 SHA-256 已完成。仍不得用 Guard8 运行；只有烧录并回读 `GUARDVER=9` 后，才可按第 6 节从 `120 mm/s gimbal-auto` 继续。
 
 ## 1. 当前结论
 
 - 轻载/原车状态下，截图所指的 V4 已在 `300 / 340 / 380 mm/s` 各完成一圈，用户评价整体可用，380 仍有轻微晃动。
-- 当前源代码是 **V4 灰度循迹 + 最小 TurnGuard + LIGHT/GIMBAL 双参数档 + TB6612 ADC + Guard8 灰度单主控/真实出边捕获/同场在线小步调参**。LIGHT 仍逐字节保持原 V4-TurnGuard 控制路径；GIMBAL 的直线与 `CAPTURE_ALIGN` 只由灰度误差控制，按误差连续调度转向权限和公共速度。IMU 不再参与直线转向，只用于遥测评分、转弯角度测量和 `25°` 直线硬保护。原 V4-TurnGuard 固件已经单独保留，随时可回退。
+- 当前源代码是 **V4 灰度循迹 + 最小 TurnGuard + LIGHT/GIMBAL 双参数档 + TB6612 ADC + Guard9 灰度单主控/有符号顺序捕线/同场在线小步调参**。LIGHT 仍逐字节保持原 V4-TurnGuard 控制路径；GIMBAL 的直线与 `CAPTURE_ALIGN` 只由灰度误差控制，按误差连续调度转向权限和公共速度。IMU 不再参与直线转向，只用于遥测评分、转弯角度测量和 `25°` 直线硬保护。原 V4-TurnGuard 固件已经单独保留，随时可回退。
 - V4-TurnGuard 在 300 mm/s 完成过一圈，平均绝对循迹误差 `1.411`、P95 `6`。
 - 用户随后给车安装了一个很重的云台，明确反馈 V4 已不能正常工作。重载会同时改变轮速响应、可用加速度、轮胎附着、重心和转弯惯量，因此下一步必须建立独立的重载参数档，不能覆盖轻载 V4 基线，也不能只盲调循迹 `Kp/Kd`。
 - **目前仍没有“重云台循迹与转弯全部实车标定完成”的 HEX。** `GUARDVER=5 exit6` 的 120 mm/s 实车资格轮已经证明：首条直边 499 帧全部在线，稳态平均绝对误差 `2.03`、P95 `6`、实际均速约 `117.9/120 mm/s`，启动、轮速和直线循迹已通过；失败发生在首弯，旧逻辑于 yaw `65.1°`、`mask=64/error=36` 时把正在离开的旧入边右外侧误判为“新边已捕获”。Guard6 随后加入旧边/gap/新边捕线、刹停和低速对中，但 `06:58:43` 的实车轮在到达首弯前触发了错误的固定 RECOVER 超时：262 帧全部 `line_valid=1`，误差已经按 `11→6→2→0` 回到中心，停车前约 33 帧持续 `mask=24/error=0`，用户也确认传感器仍在黑线上。
 - `07:37:22` 的 Guard7 实车轮进一步证明 Guard7 的分层恢复方向不对：首条直边 701 帧全部有效，平均绝对误差 `5.137`、P95 `11`，但 yaw 在 `-17.3°～+6.3°` 之间摆动，灰度误差和 yaw 多次换向，并产生 5 次恢复过程、15 条恢复阶段消息，符合灰度、IMU 航向和恢复状态机互相争夺转向权的特征。首弯到 `90.2°` 时仍为 `mask=0/line_valid=0`，却被角度条件错误报告 `TURN CAPTURE`；随后 `CAPTURE_ALIGN` 连续 60 帧全部无效线，仍以 `111/89 mm/s` 前进 72 mm，把 yaw 从 `91.1°` 拉回到 `72.8°`，最终由真正的 `LINE LOST` 安全停止。该轮没有进入循迹 A/B，也没有 `SAVE`。
-- 当前 `GUARDVER=8` 删除“有效线另起 SEEK/SETTLE 控制器”和直线 IMU 航向闭环：只要灰度仍有效，就由同一个灰度控制器连续回线；误差越大，转向权限越大、公共速度越低。转弯达到 90° 但仍在 gap 时只进入低速 `TURN SEARCH`，不能完成捕线；只有真实出边连续成立后才允许 `CAPTURE_BRAKE/CAPTURE_ALIGN`。真正失线、堵转、直线 `25°`、转弯 `115°/3.2 s` 等硬保护继续保留。Guard8 已进行首次实车尝试，但因主机竞态导致完整遥测丢失，且用户观察到首边蛇形、首弯过转并回到原边；当前版本判定为失败检查点，不能继续验收。
+- Guard8 删除了多控制器冲突，但首次实车仍因主机竞态丢失完整遥测，并暴露首弯过转回原边。当前 `GUARDVER=9` 在不改直线控制器的前提下补上有符号 yaw、IMU fail-stop、完整右出/gap/左入来源、角度/里程双窗口及捕获连续性；`90°/mask0` 只会保持低速搜索，`115°`、`1.8×TURNDIST` 或 `3.2 s` 会安全中止。Guard9 已通过软件测试与构建，但尚待 120 mm/s 实车验收。
 - 第 8 路灰度传感器已继续屏蔽：有效掩码为 `0x7F`。这是已知硬件约束，不要重新启用第 8 路。
 
 ## 2. 当前固件与回退件
 
 | 文件 | 用途 | 大小 | SHA-256 |
 | --- | --- | ---: | --- |
-| `Debug/pid_lab_mspm0.hex` | 当前已烧录并暴露“主机竞态 + 首弯过转回原边”问题的 `GUARDVER=8` 失败检查点；LIGHT 保持 V4-TurnGuard。修复出边门禁并重新构建归档前禁止继续实车运行 | 108,365 B | `132F616C025C352AF4809C2E3EE649D737AD97669A1BBEE6F1061CEC4913020D` |
-| `Debug/pid_lab_mspm0_guard8_gray_online_20260716.hex` | 与当前 HEX 逐字节一致的 Guard8 首次实车失败归档，用于复盘和回退对比，不是验收成品 | 108,365 B | `132F616C025C352AF4809C2E3EE649D737AD97669A1BBEE6F1061CEC4913020D` |
+| **当前版本标记** | 以 `recovery_pid` 归档和 `6BC94850...BE51F4D1` 哈希为准；下方旧版归档仅供对比 | 109,196 B | `6BC9485047A9B100AE7E3450632F1C8508180D3CE5906B3C9581E1CBBE51F4D1` |
+| `Debug/pid_lab_mspm0.hex` | 当前待烧录的 `GUARDVER=9` 候选；首边恢复 `120 mm/s`、起步斜坡 `500 ms`，丢线短暂保留最后转向，GIMBAL 直线差速重新交给 PID/自动调参；软件检查通过，待实车验收 | 109,196 B | `6BC9485047A9B100AE7E3450632F1C8508180D3CE5906B3C9581E1CBBE51F4D1` |
+| `Debug/pid_lab_mspm0_guard9_recovery_pid_20260717.hex` | 与当前 HEX 逐字节一致的恢复版归档；针对最新实车“起步丢线后等速前冲”修正，不再使用 `100 mm/s` 首边硬限速 | 109,196 B | `6BC9485047A9B100AE7E3450632F1C8508180D3CE5906B3C9581E1CBBE51F4D1` |
+| `Debug/pid_lab_mspm0_guard9_lineenvelope_20260717.hex` | 上一版 Guard9 直线包络归档；实车已证明它仍会在首条直边积累过大的航向偏差，仅作对比，不要再烧录 | 108,965 B | `D4F0EB1B54DF0F7BD4DAFE638C84BCC54E881AEA4B9B0765886E2AB7A8066313` |
+| `Debug/pid_lab_mspm0_guard9_signed_turngate_20260717.hex` | 与当前 HEX 逐字节一致的 Guard9 不可变候选归档，用于本轮实车验证和回退对比 | 108,994 B | `CD7A871ACB4CA7B851BB9E7B76F17171EA5DD34182DF0B17DEDBBD0E2A236777` |
+| `Debug/pid_lab_mspm0_guard8_gray_online_20260716.hex` | Guard8 首次实车失败归档，用于复盘和回退对比，不是验收成品，也不再与当前 HEX 相同 | 108,365 B | `132F616C025C352AF4809C2E3EE649D737AD97669A1BBEE6F1061CEC4913020D` |
 | `Debug/pid_lab_mspm0_guard7_progress_recovery_20260716.hex` | Guard8 前的直接回退件；对应 `07:37:22` 首边蛇形、多控制器冲突，并在 `90.2°/mask0` 错误 CAPTURE 后真正失线的 Guard7 实车固件 | 115,526 B | `FE2B03B21D8FF85442C41C2CD1356290D7C1C8EAE67B6FBC27570AF1BFF06622` |
 | `Debug/pid_lab_mspm0_guard6_capture_align_20260716.hex` | Guard7 前的直接回退件；对应 `06:58:43` 全程在线、已经回到中心却被固定 RECOVER 超时误停的 Guard6 实车固件 | 112,581 B | `D08A499C30243324D3167B5760725A28E71AFAE11378F41648BFF0AC463AD873` |
 | `Debug/pid_lab_mspm0_pre_gimbal_turn_capture_20260716.hex` | Guard6 转角捕线重构前的直接回退件；与 exit6 成品字节相同 | 105,776 B | `395F634491880E4124BBEB00CC89C0D6B2436CB0E0E627C5956DB02829A6036A` |
@@ -77,6 +86,8 @@ python .\HOST\pid_lab_cli.py diagnose --port COM12
 
 ```powershell
 Get-FileHash -Algorithm SHA256 .\Debug\pid_lab_mspm0.hex
+Get-FileHash -Algorithm SHA256 .\Debug\pid_lab_mspm0_guard9_lineenvelope_20260717.hex
+Get-FileHash -Algorithm SHA256 .\Debug\pid_lab_mspm0_guard9_signed_turngate_20260717.hex
 Get-FileHash -Algorithm SHA256 .\Debug\pid_lab_mspm0_guard8_gray_online_20260716.hex
 Get-FileHash -Algorithm SHA256 .\Debug\pid_lab_mspm0_guard7_progress_recovery_20260716.hex
 Get-FileHash -Algorithm SHA256 .\Debug\pid_lab_mspm0_guard6_capture_align_20260716.hex
@@ -151,18 +162,18 @@ V4 直线循迹代码位于 `LAB/lab_ctrl.c`：
 
 双档基础设施本身只负责参数存储和选择：`PROFILE LIGHT` / `PROFILE GIMBAL` 在电机空闲时切换槽位；切档会丢弃当前槽未 `SAVE` 的试验值；`PARAM` 用数值字段 `PROFILE=0/1` 和 `FLASHVER=3` 提供回读。LIGHT 没有调整 V4 的循迹区间、增益、限幅、TurnGuard 或第 8 路掩码。
 
-2026-07-16 的重载实车失败后，当前源码只为 GIMBAL 增加以下 Guard8 控制和安全包络，LIGHT 不进入这些分支：
+2026-07-16 的重载实车失败后，当前源码只为 GIMBAL 增加以下 Guard9 控制和安全包络，LIGHT 不进入这些分支：
 
 - GIMBAL 仍使用独立参数槽和可保存的 `GSTART`；启动共同门槛、左右破静摩擦托举、1.0 秒斜坡、轮速 PI、`SYNC/BIAS` 与堵转检测继续保留，不写入或覆盖 LIGHT；
 - 直线只保留一个转向主控：灰度误差。Guard7 的有效线 `SEEK/SETTLE` 状态机和 IMU 直线航向分量不再参与左右目标生成，避免三个控制器对同一横向误差反复反向修正；
 - 只要灰度有效，外侧误差就仍交给同一个灰度控制器；转向权限和公共速度按误差大小连续变化，大误差获得更强回线量并自动降速，不再因为跨过某个阈值切换到另一套控制器；
 - IMU 在直线段只记录相对 yaw、变化趋势和质量状态，供日志、候选评分和故障定位使用；连续达到 `25.0°` 仍是硬停止条件，但不会为了“保持绝对笔直”与灰度循迹对抗；
 - 真正无有效灰度、轮速堵转、串口任务中止和硬 yaw 越界仍立即停车。这些属于保留的硬安全限制，不是正常循迹的软门槛；
-- 转弯仍记录旧入边离开、gap、新出边首见和中心稳定。`TURNANGLE=90.0°` 只表示进入低速 `TURN SEARCH` 的角度参考；若此时 `mask=0`，必须继续受控逆时针搜索，不能发送 `TURN CAPTURE`；
-- 只有 gap 后真实出边候选连续成立，才能进入 `CAPTURE_BRAKE`。刹停后 `CAPTURE_ALIGN` 同样只由灰度控制，不叠加直线 `GSTART`、同步 trim 或 IMU 航向辅助；没有有效线就不能向前“猜中心”；
+- 转弯记录旧入边离开、连续 gap、新出边首见和中心稳定。`TURNANGLE=90.0°` 只表示进入低速 `TURN SEARCH` 的角度参考；若此时 `mask=0`，必须继续受控逆时针搜索，不能发送 `TURN CAPTURE`；GIMBAL 的 yaw 必须保持有符号逆时针进度，IMU 失效或野点立即停车；
+- 只有 `RIGHT_DEPART → 连续 gap → LEFT_ENTRY` 完整成立，且新边来自左侧 0～2 路、`error <= -6`、yaw 在 `75°～110°`、里程在 `0.75～1.8×TURNDIST` 内，才能进入 `CAPTURE_BRAKE`。刹停后必须再次确认线仍存在；`CAPTURE_ALIGN` 无线时原地停车，连续 `180 ms` 未恢复即中止；
 - 转弯 `115°` yaw 硬上限、3.2 秒总上限、真正失线、堵转和刹停超时继续保留。它们防止无限旋转，不把 90° 误当作已经找到线；
 - 每个成功转角仍发送 `TURN CAPTURE / TURN CENTER / TURN LEARN`，用真实新边首见里程学习 `TURNDIST`，用中心稳定 yaw 学习 `TURNANGLE`。学习值只在完整主机任务成功后保存，失败会恢复任务前 GIMBAL 参数；
-- 当前固件在 `PARAM` 回报 `GUARDVER=8` 和 `GSTART`；所有 GIMBAL 方框任务在车轮动作前必须读到 Guard8，Guard7 及更旧 HEX 会被上位机拒绝启动。第 8 路灰度继续以 `0x7F` 掩码屏蔽。
+- 当前固件在 `PARAM` 回报 `GUARDVER=9` 和 `GSTART`；所有 GIMBAL 方框任务在车轮动作前必须读到 Guard9，Guard8 及更旧 HEX 会被上位机拒绝启动。第 8 路灰度继续以 `0x7F` 掩码屏蔽。
 
 ## 5. 实车证据
 
@@ -313,14 +324,14 @@ python .\HOST\pid_lab_cli.py restore-gimbal-v4 --port COM12
 - 先让左右实际速度在重载下连续、无停顿、无明显偏航，再调整循迹；
 - 循迹需要按误差区间和速度做平滑增益/限幅调度，使小误差稳定、大误差仍有足够修正，不能在阈值处突然翻倍；
 - 优先限制修正变化率和目标加速度，避免重心高时左右目标瞬间反向；
-- Guard8 在有效线内始终使用同一套灰度循迹，按误差连续提高转向权限并降低公共速度；不再叠加有效线 RECOVER 或 IMU 航向转向。IMU 只参与观测、评分、转弯角度和 `25°` 硬保护；
+- Guard9 在有效线内始终使用同一套灰度循迹，按误差连续提高转向权限并降低公共速度；不再叠加有效线 RECOVER 或 IMU 航向转向。IMU 只参与观测、评分、转弯角度和 `25°` 硬保护；
 - 首条边从已保存的 GIMBAL `GSTART` 立即获得轮间前馈，再利用 `SYNC/BIAS` 和重新置零后的增量编码器做有界微调，补上直线辨识与方框循迹之间原先断开的环节；不再通过人工逐轮目测去猜左右目标；
-- 转弯参数独立重定：Guard8 保留每弯旧边离开、新边首见、中心稳定 yaw/mask/里程记录；90° 只开始低速搜索，真实出边连续成立才 CAPTURE。成功中心角更新 `TURNANGLE`，新边首见里程更新 `TURNDIST`；
+- 转弯参数独立重定：Guard9 保留每弯旧边离开、新边首见、中心稳定 yaw/mask/里程记录；90° 只开始低速搜索，完整 `RIGHT_DEPART→gap→LEFT_ENTRY` 证据连续成立才 CAPTURE。成功中心角更新 `TURNANGLE`，新边首见里程更新 `TURNDIST`；
 - 保留 TurnGuard，但 50° 只是一道早捕线保护，不是重载转弯已经完成的证明；
 - 自动调参从同一次放车的首条稳定直边就开始，不再要求先用固定参数完整跑一圈。主机对 `LINEKP/LINEKD` 做有界坐标小步试探，只在稳定、居中、有效线窗口切换；候选一旦使误差、摆动、无效线或 yaw 趋势恶化就立即回滚；
 - 只有累计至少 4 个真实 `TURN CENTER`，并且最终参数再通过至少 2 条稳定直边验证，主机才执行一次 `SAVE`。任何失败都先 `STOP`，再完整恢复任务前 GIMBAL RAM 参数；LIGHT 永不改动。
 
-以下命令是修复转弯门禁后的目标入口，当前失败检查点禁止直接运行：
+以下命令是烧录 Guard9 并确认 `PARAM` 回读后的目标入口；Guard8 失败检查点禁止运行：
 
 ```powershell
 python .\HOST\pid_lab_cli.py gimbal-auto --port COM12 --speed 120 --track-safe
@@ -328,7 +339,7 @@ python .\HOST\pid_lab_cli.py gimbal-auto --port COM12 --speed 120 --track-safe
 
 该命令先选择 GIMBAL 并强制确认固件版本；`SYNC/BIAS` 只在不匹配时提交为阶段一接受值 `500/80`，已有合法非零 `GSTART` 原样保留。主机从第一条稳定直边开始积累基线，对 `LINEKP/LINEKD` 做有界坐标小步试探，每次只改一个坐标；参数切换、评分、恶化回滚、转弯搜索、角度/里程学习和后续直边验证都在同一次连续方框任务中进行。累计至少 4 个有效中心弯并再通过至少 2 条直边后才单次保存；失败不会留下候选参数。
 
-当前下一步不是继续放车，而是完成第 0 节列出的有符号 CCW yaw、完整扫线相位、角度/里程窗口和捕获连续性修复；升级 `GUARDVER`，补回归测试，执行无警告构建，生成新的不可变 HEX 与 SHA-256。完成这些工作后，才允许再次在现场可断电观察下运行上面的 `gimbal-auto`。
+第 0 节列出的有符号 CCW yaw、完整扫线相位、角度/里程窗口和捕获连续性修复已经完成，并已升级 `GUARDVER=9`、补回归、无警告构建和不可变 HEX/SHA-256 归档。下一步是在现场可断电观察下仅运行一次上面的 120 mm/s `gimbal-auto`，根据完整日志验收或继续单点修正。
 
 建议验收顺序为：重载直线 120、重载方框 120、160、200，各速度连续多圈无失线后才考虑更高速度。不要一开始追求 380 mm/s。
 
@@ -379,13 +390,13 @@ python .\HOST\pid_lab_cli.py square --port COM12 --speed 120 --laps 1 --turn-dis
 - `MOTOR/`、`ENCODER/`、`SENSOR/`、`MPU/`、`POWER/`、`SERIAL/`：底层硬件模块，其中 `POWER/` 采集 TB6612 ADC 到 PB19 的原码和窗口极值；
 - `ESP8266_BRIDGE/`：PC 与车端的 ESP8266/串口桥；
 - `HOST/pid_autotune_gui.py`：GUI 与自动调参核心；
-- `HOST/pid_lab_cli.py`：无界面诊断、回读、分档恢复、方框记录、Guard8 `TURN SEARCH/CAPTURE/CENTER` 事件归档，以及同一次放车内从首边开始的 GIMBAL 坐标小步调参、验证、回滚和单次保存；
+- `HOST/pid_lab_cli.py`：无界面诊断、回读、分档恢复、方框记录、Guard9 `TURN SEARCH/CAPTURE/CENTER` 事件归档，以及同一次放车内从首边开始的 GIMBAL 坐标小步调参、验证、回滚和单次保存；
 - `HOST/ground_straight_test.py`：强制载荷元数据、GIMBAL 档回读、ADC 静止/运行窗口比较、连续相对 yaw、失速提前 STOP 和 120→160→200 门控的落地直线采集；
 - `HOST/imu_motor_interference_test.py`、`HOST/bridge_stress_test.py`：载荷与供电改变后仍有价值的诊断工具；
 - `HOST/test_pid_autotune.py`：上位机回归测试；
 - `build_mspm0_hex.ps1`：MSPM0 无警告构建脚本；
 - `docs/HARDWARE_REFERENCES.md`：硬件资料索引；
-- `Debug/`：保留当前 Guard8 HEX、同哈希 Guard8 成品归档、Guard7 实车失败直接回退件、Guard6 实车误停回退件、历次 Guard5/4 检查点、GSTART/启动/包络/ADC 修改前回退件、V4-TurnGuard 回退件和精确 V4 回退件；其他内容可由构建脚本重新生成。
+- `Debug/`：保留当前 Guard9 HEX、同哈希 Guard9 候选归档、Guard8/7 实车失败回退件、Guard6 实车误停回退件、历次 Guard5/4 检查点、GSTART/启动/包络/ADC 修改前回退件、V4-TurnGuard 回退件和精确 V4 回退件；其他内容可由构建脚本重新生成。
 
 已清理内容包括：过时调参冠军文件、已否决循迹试验日志、重复试跑、旧诊断 HEX、旧别名 HEX、对象文件、链接中间文件、SysConfig 临时输出和 Python 缓存。不要把这些历史结果重新当作当前参数来源。
 
@@ -400,7 +411,7 @@ python -m py_compile .\HOST\pid_autotune_gui.py .\HOST\pid_lab_cli.py .\HOST\gro
 python -m unittest discover -s .\HOST -p "test_*.py"
 ```
 
-正常构建只更新 `Debug/pid_lab_mspm0.hex`，不会覆盖任何显式归档/回退件。重新构建后必须重新记录大小和 SHA-256，再复制成新的成品归档。构建脚本以 `-Wall -Wextra -Werror` 强制 warning 失败；Guard8 的回归重点必须包含：`065843` 全程有效线不能再触发另一套有效线恢复控制器，`073722` 的 `90.2°/mask0` 不得进入 CAPTURE，`CAPTURE_ALIGN` 不得继承直线辅助，以及失败任务不得 `SAVE`。当前 Guard8 HEX 为 108,365 B、SHA-256 `132F616C025C352AF4809C2E3EE649D737AD97669A1BBEE6F1061CEC4913020D`；归档名为 `pid_lab_mspm0_guard8_gray_online_20260716.hex`。Guard7 实车失败回退件仍为 115,526 B、SHA-256 `FE2B03B21D8FF85442C41C2CD1356290D7C1C8EAE67B6FBC27570AF1BFF06622`。轻载 V4-TurnGuard/精确 V4 仍分别为 `E8EA86F3A9CD9BA089644B90D8C7E6922221B08E38C6136FD7068A4648A36A93` 和 `39AB0AF11D68C6541B7C159AD4590EF7AFE632C9B79B4F9DA43B3ED5CF7B5AA1`。
+正常构建只更新 `Debug/pid_lab_mspm0.hex`，不会覆盖任何显式归档/回退件。重新构建后必须重新记录大小和 SHA-256，再复制成新的候选归档。构建脚本以 `-Wall -Wextra -Werror` 强制 warning 失败；Guard9 的回归重点包含：`065843` 全程有效线不能触发另一套有效线恢复控制器，`073722` 的 `90.2°/mask0` 不得进入 CAPTURE，正确 `mask1→3→2` 序列必须允许捕获，单独 `mask24`、IMU 失效、过角/过里程和刹停/ALIGN 丢线必须 fail-stop，以及失败任务不得 `SAVE`。当前首边限速版 HEX 为 109,103 B、SHA-256 `BECE426327DFE2DABF0FB8FEC0EDD2E4549C8F69A3CDDC99B20C3E2F5B7457CF`；归档名为 `pid_lab_mspm0_guard9_firstedge100_20260717.hex`。上一版直线包络归档为 108,965 B、SHA-256 `D4F0EB1B54DF0F7BD4DAFE638C84BCC54E881AEA4B9B0765886E2AB7A8066313`。上一版 Guard9 转弯门禁归档为 108,994 B、SHA-256 `CD7A871ACB4CA7B851BB9E7B76F17171EA5DD34182DF0B17DEDBBD0E2A236777`。Guard8 失败回退件仍为 108,365 B、SHA-256 `132F616C025C352AF4809C2E3EE649D737AD97669A1BBEE6F1061CEC4913020D`。轻载 V4-TurnGuard/精确 V4 仍分别为 `E8EA86F3A9CD9BA089644B90D8C7E6922221B08E38C6136FD7068A4648A36A93` 和 `39AB0AF11D68C6541B7C159AD4590EF7AFE632C9B79B4F9DA43B3ED5CF7B5AA1`。
 
 ## 10. 新对话直接使用的开场提示
 
@@ -408,9 +419,9 @@ python -m unittest discover -s .\HOST -p "test_*.py"
 请先完整阅读 README.md，再检查当前源码和保留日志。工程唯一基线是 V4：
 Debug/pid_lab_mspm0_v4_exact.hex 是截图中的精确 V4；
 Debug/pid_lab_mspm0_v4_turnguard.hex 是修改前的 V4 直线循迹原样加最小 50° TurnGuard 回退件；
-Debug/pid_lab_mspm0.hex 的 LIGHT 仍保持 V4-TurnGuard；GIMBAL 为 Guard8：直线和 CAPTURE_ALIGN 只由灰度主控，误差越大自动增加回线权限并降速，IMU 只做观测/评分、转弯角度和25°硬保护；90°只是 TURN SEARCH 参考，没有真实出边连续证据不能 CAPTURE，115°/3.2秒等硬保护继续保留。第8路继续屏蔽。当前 HEX 为108365 B，SHA-256 132F616C025C352AF4809C2E3EE649D737AD97669A1BBEE6F1061CEC4913020D；同哈希归档为 Debug/pid_lab_mspm0_guard8_gray_online_20260716.hex，Guard7 直接回退件为 Debug/pid_lab_mspm0_guard7_progress_recovery_20260716.hex。
+Debug/pid_lab_mspm0.hex 的 LIGHT 仍保持 V4-TurnGuard；GIMBAL 为 Guard9：直线和 CAPTURE_ALIGN 只由灰度主控，首边恢复120 mm/s、起步斜坡500 ms，丢线早期保留最后一次灰度转向，直线差速由 PID/自动调参决定；IMU 只做观测/评分和宽松航向保护。转弯继续使用有符号逆时针 yaw 与必要的捕线顺序，避免过早把旧边当成新边；刹停/ALIGN 无线不能向前。第8路继续屏蔽。当前 HEX 为109196 B，SHA-256 6BC9485047A9B100AE7E3450632F1C8508180D3CE5906B3C9581E1CBBE51F4D1；同哈希归档为 Debug/pid_lab_mspm0_guard9_recovery_pid_20260717.hex。
 轻载 V4 已在 300/340/380 mm/s 完成过方框，但安装很重的云台后已经不能正常工作。
 不要恢复已否决的中间循迹算法，不要覆盖轻载 V4 参数，不要先盲调 LINEKP/LINEKD。
-已确认云台独立供电且与小车无电气连接、姿态稳定、重心中部偏前、两轮机械阻力接近；不要默认怀疑用户接线。重载阶段一使用 `SYNC=500、BIAS=80、GSTART=10`，LIGHT 仍为 V4 `SYNC=1000、BIAS=50`。07:37 Guard7 实车首边701帧全有效却持续蛇形，5次恢复和多次误差/yaw换向证明灰度、IMU航向、恢复状态机互相冲突；首弯又在90.2°、mask0时错误CAPTURE，随后60帧全invalid并真正LINE LOST，无SAVE。Guard8改为灰度单主控和真实出边捕获，但08:30首次实车暴露CLI启动竞态，日志只到440ms且无候选、无SAVE；日志中断后用户观察到首边仍蛇形、首弯过转到起步直线并原路返回。CLI竞态已修复，固件转弯门禁尚未修复。当前Guard8 HEX是失败检查点，禁止直接继续放车。下一步先实现有符号CCW yaw、75°～110°窗口、RIGHT_DEPART→gap→LEFT_ENTRY、0.75～1.8×TURNDIST和捕获连续性门禁，升级GUARDVER并完成测试、无警告构建、新HEX归档与SHA-256。LIGHT不变。
+已确认云台独立供电且与小车无电气连接、姿态稳定、重心中部偏前、两轮机械阻力接近；不要默认怀疑用户接线。重载阶段一使用 `SYNC=500、BIAS=80、GSTART=10`，LIGHT 仍为 V4 `SYNC=1000、BIAS=50`。07:37 Guard7 实车首边701帧全有效却持续蛇形，5次恢复和多次误差/yaw换向证明灰度、IMU航向、恢复状态机互相冲突；首弯又在90.2°、mask0时错误CAPTURE，随后60帧全invalid并真正LINE LOST，无SAVE。Guard8改为灰度单主控，但08:30首次实车暴露CLI启动竞态，日志只到440ms且无候选、无SAVE；日志中断后用户观察到首边仍蛇形、首弯过转到起步直线并原路返回。CLI竞态已修复。Guard9 已实现有符号CCW yaw、75°～110°窗口、RIGHT_DEPART→连续gap→LEFT_ENTRY、0.75～1.8×TURNDIST和捕获连续性门禁，62项测试与无警告构建通过，新HEX已归档；尚未实车验收。下一步烧录后回读GUARDVER=9，仅跑120 mm/s gimbal-auto并保留完整日志。LIGHT不变。
 每次修改都要保留可回退 HEX、明确 SHA-256，并先跑上位机测试和固件无警告构建。
 ```

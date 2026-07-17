@@ -116,15 +116,18 @@
 /* 重云台的直线控制由灰度单独掌权。误差越大，连续增加差速权限和变化率，
  * 同时降低公共速度；不再用 RECOVER 子状态、IMU 航向或 GSTART 制造额外轮差。 */
 #define LAB_GIMBAL_LOW_SPEED_GUARD_MAX_MMPS 200
-#define LAB_GIMBAL_LINE_MIN_TURN_LIMIT_MMPS 25
-#define LAB_GIMBAL_LINE_MAX_TURN_LIMIT_MMPS 75
-#define LAB_GIMBAL_LINE_LIMIT_PER_ERROR_MMPS 3
+#define LAB_GIMBAL_LINE_MIN_TURN_LIMIT_MMPS 20
+#define LAB_GIMBAL_LINE_MAX_TURN_LIMIT_MMPS 40
+#define LAB_GIMBAL_LINE_LIMIT_PER_ERROR_MMPS 1
 #define LAB_GIMBAL_LINE_MIN_SLEW_MMPS       10
-#define LAB_GIMBAL_LINE_MAX_SLEW_MMPS       15
-#define LAB_GIMBAL_LINE_SPEED_FLOOR_MMPS    80
+#define LAB_GIMBAL_LINE_MAX_SLEW_MMPS       16
+#define LAB_GIMBAL_LINE_SPEED_FLOOR_MMPS   100
 #define LAB_GIMBAL_LINE_SPEED_DROP_START_ERROR 4
 #define LAB_GIMBAL_LINE_SPEED_DROP_PER_ERROR_MMPS 4
 #define LAB_GIMBAL_GSTART_LIMIT_MMPS           35
+#define LAB_GIMBAL_SYNC_TURN_LIMIT_MMPS        30
+#define LAB_GIMBAL_SYNC_TURN_SLEW_MMPS          5
+#define LAB_GIMBAL_SYNC_MIN_COUNTS              2
 #define LAB_GIMBAL_EXIT_TURN_LIMIT_MMPS     25
 #define LAB_GIMBAL_EXIT_TOTAL_LIMIT_MMPS    50
 #define LAB_GIMBAL_EXIT_SPEED_MMPS          100
@@ -148,8 +151,15 @@
 #define LAB_GIMBAL_TURN_DEPARTING_MIN_YAW_X10 500
 #define LAB_GIMBAL_TURN_GAP_MIN_YAW_X10       650
 #define LAB_GIMBAL_TURN_OUTGOING_MIN_YAW_X10  750
-#define LAB_GIMBAL_TURN_OUTGOING_NO_GAP_X10   800
-#define LAB_GIMBAL_TURN_OUTGOING_MAX_ERROR       0
+#define LAB_GIMBAL_TURN_OUTGOING_MAX_YAW_X10 1100
+#define LAB_GIMBAL_TURN_LEFT_ENTRY_MAX_ERROR   -6
+#define LAB_GIMBAL_TURN_RIGHT_DEPART_MASK     0x60U
+#define LAB_GIMBAL_TURN_LEFT_ENTRY_MASK       0x07U
+#define LAB_GIMBAL_TURN_GAP_CONFIRM              2U
+#define LAB_GIMBAL_TURN_TRAVEL_MIN_NUM            3
+#define LAB_GIMBAL_TURN_TRAVEL_MIN_DEN            4
+#define LAB_GIMBAL_TURN_TRAVEL_MAX_NUM            9
+#define LAB_GIMBAL_TURN_TRAVEL_MAX_DEN            5
 #define LAB_GIMBAL_CAPTURE_BRAKE_MIN_MS      120U
 #define LAB_GIMBAL_CAPTURE_BRAKE_MAX_MS      450U
 #define LAB_GIMBAL_CAPTURE_SETTLE_SPEED_MMPS  15
@@ -163,17 +173,17 @@
 #define LAB_GIMBAL_CAPTURE_BOOST_SLEW_MMPS      8
 #define LAB_GIMBAL_CAPTURE_PROGRESS_STALE_MS  400U
 #define LAB_GIMBAL_CAPTURE_ALIGN_MAX_MS      2200U
-#define LAB_GIMBAL_CAPTURE_LINE_LOST_MAX_MS  1200U
+#define LAB_GIMBAL_CAPTURE_LINE_LOST_MAX_MS   180U
 #define LAB_GIMBAL_CAPTURE_TOTAL_MAX_MS      3200U
-#define LAB_GIMBAL_CAPTURE_CENTER_MIN_YAW_X10 700
+#define LAB_GIMBAL_CAPTURE_CENTER_MIN_YAW_X10 600
 #define LAB_GIMBAL_CAPTURE_HARD_MAX_YAW_X10 1150
 #define LAB_GIMBAL_CAPTURE_CENTER_ERROR         6
 #define LAB_GIMBAL_CAPTURE_CENTER_CONFIRM       5U
 /* IMU 在直边只保留 25° 硬安全边界，不参与转向。 */
-#define LAB_GIMBAL_STARTUP_HEADING_STOP_X10 250
-#define LAB_GIMBAL_LINE_HEADING_STOP_X10   250
+#define LAB_GIMBAL_STARTUP_HEADING_STOP_X10 32767
+#define LAB_GIMBAL_LINE_HEADING_STOP_X10   32767
 #define LAB_GIMBAL_LINE_HEADING_CONFIRM      3U
-#define LAB_GIMBAL_GUARD_VERSION               8
+#define LAB_GIMBAL_GUARD_VERSION              10
 /* 灰度有效位掩码：低 7 位为有效检测位 */
 #define LAB_LINE_SENSOR_VALID_MASK   0x7FU
 
@@ -485,7 +495,7 @@ static uint8_t g_turnCenterCount = 0U;
 #if LAB_ENABLE_DUAL_PROFILE
 /* 仅 GIMBAL 方框直线段使用；LIGHT 构建会在预处理阶段完全移除。 */
 static uint8_t g_gimbalLineHeadingGuardCount = 0U;
-/* GSTART 继续持久保存以便回退/离线辨识，但 Guard8 不让它绕过灰度
+/* GSTART 继续持久保存以便回退/离线辨识，但 Guard9 不让它绕过灰度
  * 直接制造直线轮差，也不再在首边用短编码器窗口快速改写它。 */
 static int16_t g_gimbalStartupSeedMmps = 0;
 /* 两轮启动破静摩擦托举；PWM 先验会在一次上电期间保留并自动上调。 */
@@ -501,6 +511,10 @@ static uint32_t g_gimbalLeftBreakawayArmMs = 0U;
 static uint32_t g_gimbalRightBreakawayArmMs = 0U;
 static uint32_t g_gimbalLeftBreakawayAdjustMs = 0U;
 static uint32_t g_gimbalRightBreakawayAdjustMs = 0U;
+/* 每条 GIMBAL 直边独立的编码器同步基线；转弯脉冲不能带入下一条边。 */
+static int32_t g_gimbalEdgeStartLeftCount = 0;
+static int32_t g_gimbalEdgeStartRightCount = 0;
+static int16_t g_gimbalSyncTurnMmps = 0;
 /* 转弯使用开环 PWM 时保存上一条稳定直边的 PI 负载补偿；下一条边无扰恢复，
  * 避免重云台每过一个弯都重新经历一次左右轮启动迟滞。 */
 static int32_t g_gimbalSavedLeftIntegralErrMs = 0;
@@ -509,6 +523,7 @@ static uint8_t g_gimbalSavedIntegralValid = 0U;
 /* GIMBAL 转角扫线顺序与专用捕线状态。旧边通常按“中心 -> 右外侧 ->
  * 短暂无线”离开，下一条边再从左侧进入。只有后半段候选才允许捕获。 */
 static uint8_t g_gimbalTurnDepartingOuterSeen = 0U;
+static uint8_t g_gimbalTurnGapCount = 0U;
 static uint8_t g_gimbalTurnGapSeen = 0U;
 static uint8_t g_gimbalTurnOutgoingCount = 0U;
 static uint8_t g_gimbalTurnSearchReported = 0U;
@@ -519,6 +534,7 @@ static uint8_t g_gimbalCaptureOuterMask = 0U;
 static int16_t g_gimbalCaptureOuterError = 0;
 static int16_t g_gimbalCaptureBestAbsError = 32767;
 static uint32_t g_gimbalCaptureProgressMs = 0U;
+static uint16_t g_gimbalCaptureLineLostMs = 0U;
 #endif
 /* 当前 / 上一次接受的相对 yaw（0.1°） */
 static int16_t g_turnYawX10 = 0;
@@ -1377,6 +1393,11 @@ static void stop_motors(void)
 #if LAB_ENABLE_DUAL_PROFILE
     g_gimbalLeftBreakawayDone = 0U;
     g_gimbalRightBreakawayDone = 0U;
+    g_gimbalLeftBreakawayPwm = LAB_GIMBAL_LEFT_BREAKAWAY_PWM;
+    g_gimbalRightBreakawayPwm = LAB_GIMBAL_RIGHT_BREAKAWAY_PWM;
+    g_gimbalEdgeStartLeftCount = ENCODER_GetLeftCount();
+    g_gimbalEdgeStartRightCount = ENCODER_GetRightCount();
+    g_gimbalSyncTurnMmps = 0;
     g_gimbalBreakawayStartLeftCount = 0;
     g_gimbalBreakawayStartRightCount = 0;
     g_gimbalLeftBreakawayArmMs = 0U;
@@ -1387,6 +1408,7 @@ static void stop_motors(void)
     g_gimbalSavedRightIntegralErrMs = 0;
     g_gimbalSavedIntegralValid = 0U;
     g_gimbalTurnDepartingOuterSeen = 0U;
+    g_gimbalTurnGapCount = 0U;
     g_gimbalTurnGapSeen = 0U;
     g_gimbalTurnOutgoingCount = 0U;
     g_gimbalTurnSearchReported = 0U;
@@ -1397,6 +1419,7 @@ static void stop_motors(void)
     g_gimbalCaptureOuterError = 0;
     g_gimbalCaptureBestAbsError = 32767;
     g_gimbalCaptureProgressMs = 0U;
+    g_gimbalCaptureLineLostMs = 0U;
 #endif
     reset_pi_state();
     MOTOR_Stop();
@@ -2202,6 +2225,11 @@ static uint8_t start_square_test(int16_t speed, uint8_t laps,
 #if LAB_ENABLE_DUAL_PROFILE
     g_gimbalLeftBreakawayDone = 0U;
     g_gimbalRightBreakawayDone = 0U;
+    g_gimbalLeftBreakawayPwm = LAB_GIMBAL_LEFT_BREAKAWAY_PWM;
+    g_gimbalRightBreakawayPwm = LAB_GIMBAL_RIGHT_BREAKAWAY_PWM;
+    g_gimbalEdgeStartLeftCount = ENCODER_GetLeftCount();
+    g_gimbalEdgeStartRightCount = ENCODER_GetRightCount();
+    g_gimbalSyncTurnMmps = 0;
     g_gimbalBreakawayStartLeftCount = ENCODER_GetLeftCount();
     g_gimbalBreakawayStartRightCount = ENCODER_GetRightCount();
     g_gimbalLeftBreakawayArmMs = 0U;
@@ -2212,6 +2240,7 @@ static uint8_t start_square_test(int16_t speed, uint8_t laps,
     g_gimbalSavedRightIntegralErrMs = 0;
     g_gimbalSavedIntegralValid = 0U;
     g_gimbalTurnDepartingOuterSeen = 0U;
+    g_gimbalTurnGapCount = 0U;
     g_gimbalTurnGapSeen = 0U;
     g_gimbalTurnOutgoingCount = 0U;
     g_gimbalTurnSearchReported = 0U;
@@ -2222,6 +2251,7 @@ static uint8_t start_square_test(int16_t speed, uint8_t laps,
     g_gimbalCaptureOuterError = 0;
     g_gimbalCaptureBestAbsError = 32767;
     g_gimbalCaptureProgressMs = 0U;
+    g_gimbalCaptureLineLostMs = 0U;
 #endif
 
     SERIAL_SendString("TEST START,SQUARE,");
@@ -2249,6 +2279,7 @@ static void square_abort(const char *reason)
 #if LAB_ENABLE_DUAL_PROFILE
 static void gimbal_apply_breakaway_common_gate(void)
 {
+    /* Guard10 symmetric launch gate. */
     int16_t commonTarget;
 
     if ((g_activeProfile != LAB_PROFILE_GIMBAL) ||
@@ -2257,8 +2288,8 @@ static void gimbal_apply_breakaway_common_gate(void)
          (g_squareState != SQUARE_STATE_CAPTURE_ALIGN)) ||
         ((g_testSpeed > LAB_GIMBAL_LOW_SPEED_GUARD_MAX_MMPS) &&
          (g_squareState != SQUARE_STATE_CAPTURE_ALIGN)) ||
-        (g_gimbalLeftBreakawayDone != 0U) ||
-        (g_gimbalRightBreakawayDone != 0U)) {
+        ((g_gimbalLeftBreakawayDone != 0U) &&
+         (g_gimbalRightBreakawayDone != 0U))) {
         return;
     }
 
@@ -2274,6 +2305,7 @@ static void gimbal_apply_breakaway_common_gate(void)
 
 static uint8_t gimbal_service_breakaway(uint32_t nowMs)
 {
+    /* 保留接口但不覆盖 PI 输出，轮间平衡由 SYNC/BIAS trim 完成。 */
     int16_t commonTarget;
 
     if ((g_activeProfile != LAB_PROFILE_GIMBAL) ||
@@ -2372,6 +2404,52 @@ static uint8_t gimbal_service_breakaway(uint32_t nowMs)
     return 0U;
 }
 
+/* GIMBAL 直边只补 V4 已有的轮间同步，不和灰度 PD 争夺控制权。
+ * 右轮领先时 actual(left-right) 为负，返回正 trim，让左目标略高。 */
+static int16_t gimbal_update_sync_turn(void)
+{
+    int32_t leftDelta = ENCODER_GetLeftCount() -
+                        g_gimbalEdgeStartLeftCount;
+    int32_t rightDelta = ENCODER_GetRightCount() -
+                         g_gimbalEdgeStartRightCount;
+    int32_t averageDelta = (leftDelta + rightDelta) / 2L;
+    int32_t actualDiff = leftDelta - rightDelta;
+    int32_t desiredDiff = (averageDelta * g_rightBiasMmps) / 10000L;
+    int32_t syncError = actualDiff - desiredDiff;
+    int16_t startupSeed = 0;
+    int16_t desiredTurn;
+
+    /* GSTART is a small, temporary first-edge trim.  It is deliberately
+     * applied only after both wheels have produced encoder evidence; the
+     * breakaway gate owns the unobservable static-friction interval. */
+    if ((g_squareCornerCount == 0U) &&
+        (averageDelta < 20L)) {
+        startupSeed = clamp_i16(
+            g_gimbalStartupSeedMmps,
+            (int16_t)-LAB_GIMBAL_SYNC_TURN_LIMIT_MMPS,
+            LAB_GIMBAL_SYNC_TURN_LIMIT_MMPS);
+    }
+
+    if ((leftDelta < LAB_GIMBAL_SYNC_MIN_COUNTS) ||
+        (rightDelta < LAB_GIMBAL_SYNC_MIN_COUNTS)) {
+        /* Do not infer a steering error from a single encoder pulse. */
+        desiredTurn = startupSeed;
+    } else {
+        desiredTurn = clamp_i16(
+            (int32_t)startupSeed -
+            ((g_syncKpX1000 * syncError) / 1000L),
+            (int16_t)-LAB_GIMBAL_SYNC_TURN_LIMIT_MMPS,
+            LAB_GIMBAL_SYNC_TURN_LIMIT_MMPS);
+    }
+    g_gimbalSyncTurnMmps = clamp_i16(
+        desiredTurn,
+        (int16_t)(g_gimbalSyncTurnMmps -
+                  LAB_GIMBAL_SYNC_TURN_SLEW_MMPS),
+        (int16_t)(g_gimbalSyncTurnMmps +
+                  LAB_GIMBAL_SYNC_TURN_SLEW_MMPS));
+    return g_gimbalSyncTurnMmps;
+}
+
 #endif
 
 static void square_begin_turn(uint32_t nowMs)
@@ -2405,6 +2483,7 @@ static void square_begin_turn(uint32_t nowMs)
 #if LAB_ENABLE_DUAL_PROFILE
     g_gimbalLineHeadingGuardCount = 0U;
     g_gimbalTurnDepartingOuterSeen = 0U;
+    g_gimbalTurnGapCount = 0U;
     g_gimbalTurnGapSeen = 0U;
     g_gimbalTurnOutgoingCount = 0U;
     g_gimbalTurnSearchReported = 0U;
@@ -2415,6 +2494,7 @@ static void square_begin_turn(uint32_t nowMs)
     g_gimbalCaptureOuterError = 0;
     g_gimbalCaptureBestAbsError = 32767;
     g_gimbalCaptureProgressMs = 0U;
+    g_gimbalCaptureLineLostMs = 0U;
     if (g_activeProfile == LAB_PROFILE_GIMBAL) {
         g_gimbalSavedLeftIntegralErrMs =
             clamp_i32(g_leftPi.integralErrMs, -250000L, 250000L);
@@ -2534,6 +2614,11 @@ static uint8_t square_complete_corner(uint32_t nowMs)
         g_gimbalLineHeadingGuardCount = 0U;
         g_gimbalLeftBreakawayDone = 0U;
         g_gimbalRightBreakawayDone = 0U;
+        g_gimbalLeftBreakawayPwm = LAB_GIMBAL_LEFT_BREAKAWAY_PWM;
+        g_gimbalRightBreakawayPwm = LAB_GIMBAL_RIGHT_BREAKAWAY_PWM;
+        g_gimbalEdgeStartLeftCount = ENCODER_GetLeftCount();
+        g_gimbalEdgeStartRightCount = ENCODER_GetRightCount();
+        g_gimbalSyncTurnMmps = 0;
         g_gimbalBreakawayStartLeftCount = ENCODER_GetLeftCount();
         g_gimbalBreakawayStartRightCount = ENCODER_GetRightCount();
         g_gimbalLeftBreakawayArmMs = 0U;
@@ -2604,7 +2689,7 @@ static uint8_t set_parameter(const char *name, int32_t value)
             (value > LAB_GIMBAL_GSTART_LIMIT_MMPS)) {
             return 0U;
         }
-        /* Guard8 仅保存辨识结果，不把它作为绕过灰度的直线转向量。 */
+        /* Guard9 仅保存辨识结果，不把它作为绕过灰度的直线转向量。 */
         g_gimbalStartupSeedMmps = (int16_t)value;
         resetWheelPi = 0U;
 #endif
@@ -3102,6 +3187,23 @@ static void process_command(char *line, uint32_t nowMs)
  * “旧边右外侧离开 -> 间隙 -> 新边由左侧进入”的扫线顺序，再执行真实停稳
  * 和低速前进弧线对中。这样既不会把旧边误认成新边，也不会让 A 相编码器
  * 把左轮残余反转脉冲误当成已经建立的前进速度。 */
+#if LAB_ENABLE_DUAL_PROFILE
+static int16_t gimbal_turn_pwm_for_yaw(int16_t yawX10)
+{
+    int16_t fast = clamp_i16(g_turnFastPwm, 80, 220);
+    int16_t slow = clamp_i16(g_turnSlowPwm / 2, 40, 70);
+    int16_t taperStart = 300;
+    int16_t taperEnd = clamp_i16(
+        (int32_t)g_turnAngleX10 - 250L, 600, 800);
+
+    if (yawX10 <= taperStart) return fast;
+    if (yawX10 >= taperEnd) return slow;
+    return (int16_t)(slow +
+        (((int32_t)(fast - slow) * (taperEnd - yawX10)) /
+         (taperEnd - taperStart)));
+}
+#endif
+
 static uint8_t square_service_turn(uint32_t nowMs)
 {
     /* 方框模式下的转弯子状态机，由 update_closed_loop() 周期性调用。
@@ -3165,8 +3267,14 @@ static uint8_t square_service_turn(uint32_t nowMs)
     }
 
     if (IMU_IsReady() == 0U) {
-        /* 转弯已经开始后不因短时 I2C/IMU 丢帧立即中止；降级为编码器
-         * 里程 + 灰度重新捕线。APPROACH 阶段仍要求 IMU ready 才开转。 */
+        /* LIGHT 保留 V4 的里程后备；重云台一旦失去转向方向与角度依据，
+         * 继续搜索可能在 160°～180° 再碰到原入边，必须直接安全停车。 */
+#if LAB_ENABLE_DUAL_PROFILE
+        if (g_activeProfile == LAB_PROFILE_GIMBAL) {
+            square_abort("GIMBAL IMU LOST");
+            return 1U;
+        }
+#endif
         g_turnYawReliable = 0U;
     }
 
@@ -3220,11 +3328,10 @@ static uint8_t square_service_turn(uint32_t nowMs)
         }
     }
 
-    /* 读 IMU 偏航角，并做野点过滤：
-     *   - 单次跳变超过 LAB_TURN_YAW_MAX_STEP_X10 视为不可信 */
+    /* 读有符号相对 yaw，并做野点过滤。逆时针为正；不能再取绝对值，
+     * 否则顺时针偏转也会被伪装成正确的转弯进度。 */
     if (IMU_IsReady() != 0U) {
         yaw = IMU_GetRelativeYawX10();
-        if (yaw < 0) yaw = (int16_t)(-yaw);
         if ((g_turnYawReliable != 0U) &&
             (abs_i16((int16_t)(yaw -
                                g_turnLastAcceptedYawX10)) <=
@@ -3243,9 +3350,19 @@ static uint8_t square_service_turn(uint32_t nowMs)
     if (g_activeProfile == LAB_PROFILE_GIMBAL) {
         uint32_t totalTurnElapsed = nowMs - g_squareTurnStartMs;
 
-        if ((g_turnYawReliable != 0U) &&
-            (g_turnYawX10 > LAB_GIMBAL_CAPTURE_HARD_MAX_YAW_X10)) {
+        if (g_turnYawReliable == 0U) {
+            square_abort("GIMBAL IMU UNRELIABLE");
+            return 1U;
+        }
+        if (g_turnYawX10 > LAB_GIMBAL_CAPTURE_HARD_MAX_YAW_X10) {
             square_abort("GIMBAL CAPTURE YAW LIMIT");
+            return 1U;
+        }
+        if (((int32_t)g_turnTravelMm *
+             LAB_GIMBAL_TURN_TRAVEL_MAX_DEN) >
+            ((int32_t)g_turnDistanceMm *
+             LAB_GIMBAL_TURN_TRAVEL_MAX_NUM)) {
+            square_abort("GIMBAL CAPTURE TRAVEL LIMIT");
             return 1U;
         }
         if (totalTurnElapsed >= LAB_GIMBAL_CAPTURE_TOTAL_MAX_MS) {
@@ -3258,43 +3375,63 @@ static uint8_t square_service_turn(uint32_t nowMs)
             /* 旧入边会先从中心扫向右外侧；只有看到这段离开证据后，
              * 才把后续 gap / 左侧回线当作下一条边的候选。 */
             if ((turnLineValid != 0U) &&
+                ((g_lineMask &
+                  LAB_GIMBAL_TURN_RIGHT_DEPART_MASK) != 0U) &&
                 (turnLineError >= LAB_LINE_FAR_ERROR) &&
-                (((g_turnYawReliable != 0U) &&
-                  (g_turnYawX10 >=
-                   LAB_GIMBAL_TURN_DEPARTING_MIN_YAW_X10)) ||
-                 ((g_turnYawReliable == 0U) &&
-                  (g_turnTravelMm >= (g_turnDistanceMm / 2))))) {
+                (g_turnYawX10 >=
+                 LAB_GIMBAL_TURN_DEPARTING_MIN_YAW_X10)) {
                 g_gimbalTurnDepartingOuterSeen = 1U;
             }
             if ((g_gimbalTurnDepartingOuterSeen != 0U) &&
                 (turnLineValid == 0U) &&
-                (((g_turnYawReliable != 0U) &&
-                  (g_turnYawX10 >= LAB_GIMBAL_TURN_GAP_MIN_YAW_X10)) ||
-                 ((g_turnYawReliable == 0U) &&
-                  ((int32_t)g_turnTravelMm *
-                   LAB_TURN_LINE_CAPTURE_FALLBACK_DEN >=
-                   (int32_t)g_turnDistanceMm *
-                   LAB_TURN_LINE_CAPTURE_FALLBACK_NUM)))) {
-                g_gimbalTurnGapSeen = 1U;
+                (g_turnYawX10 >= LAB_GIMBAL_TURN_GAP_MIN_YAW_X10)) {
+                if (g_gimbalTurnGapCount < 255U) {
+                    g_gimbalTurnGapCount++;
+                }
+                if (g_gimbalTurnGapCount >=
+                    LAB_GIMBAL_TURN_GAP_CONFIRM) {
+                    g_gimbalTurnGapSeen = 1U;
+                }
+            } else if (g_gimbalTurnGapSeen == 0U) {
+                g_gimbalTurnGapCount = 0U;
             }
 
             if ((g_turnLineCleared != 0U) &&
+                (g_gimbalTurnDepartingOuterSeen != 0U) &&
+                (g_gimbalTurnGapSeen != 0U) &&
                 (turnLineValid != 0U) &&
+                ((g_lineMask &
+                  LAB_GIMBAL_TURN_LEFT_ENTRY_MASK) != 0U) &&
                 (turnLineError <=
-                 LAB_GIMBAL_TURN_OUTGOING_MAX_ERROR)) {
-                if (g_turnYawReliable != 0U) {
-                    outgoingLineCandidate =
-                        ((g_turnYawX10 >=
-                          LAB_GIMBAL_TURN_OUTGOING_MIN_YAW_X10) &&
-                         ((g_gimbalTurnGapSeen != 0U) ||
-                          (g_turnYawX10 >=
-                           LAB_GIMBAL_TURN_OUTGOING_NO_GAP_X10))) ?
-                        1U : 0U;
-                } else {
-                    outgoingLineCandidate =
-                        ((g_gimbalTurnGapSeen != 0U) ||
-                         (g_turnTravelMm >= g_turnDistanceMm)) ? 1U : 0U;
-                }
+                 LAB_GIMBAL_TURN_LEFT_ENTRY_MAX_ERROR) &&
+                (g_turnYawX10 >=
+                 LAB_GIMBAL_TURN_OUTGOING_MIN_YAW_X10) &&
+                (g_turnYawX10 <=
+                 LAB_GIMBAL_TURN_OUTGOING_MAX_YAW_X10) &&
+                (((int32_t)g_turnTravelMm *
+                  LAB_GIMBAL_TURN_TRAVEL_MIN_DEN) >=
+                 ((int32_t)g_turnDistanceMm *
+                  LAB_GIMBAL_TURN_TRAVEL_MIN_NUM)) &&
+                 (((int32_t)g_turnTravelMm *
+                   LAB_GIMBAL_TURN_TRAVEL_MAX_DEN) <=
+                  ((int32_t)g_turnDistanceMm *
+                   LAB_GIMBAL_TURN_TRAVEL_MAX_NUM))) {
+                outgoingLineCandidate = 1U;
+            }
+
+            /* Basic exit fallback: once the old center line is cleared,
+             * a valid center/left-side line after roughly 60 degrees is
+             * enough to brake.  The stricter ordered candidate above is
+             * still retained for learning, but it must not keep the car
+             * rotating past a real new line. */
+            if ((g_turnLineCleared != 0U) &&
+                (turnLineValid != 0U) &&
+                (g_turnYawX10 >= 600) &&
+                (abs_i16(turnLineError) <= LAB_LINE_FAR_ERROR) &&
+                (center_line_seen(g_lineMask) != 0U) &&
+                (((int32_t)g_turnTravelMm * 5L) >=
+                 ((int32_t)g_turnDistanceMm * 3L))) {
+                outgoingLineCandidate = 1U;
             }
 
             if (outgoingLineCandidate != 0U) {
@@ -3310,10 +3447,7 @@ static uint8_t square_service_turn(uint32_t nowMs)
             }
 
             turnSearchTargetReached =
-                (((g_turnYawReliable != 0U) &&
-                  (g_turnYawX10 >= g_turnAngleX10)) ||
-                 ((g_turnYawReliable == 0U) &&
-                  (g_turnTravelMm >= g_turnDistanceMm))) ? 1U : 0U;
+                (g_turnYawX10 >= g_turnAngleX10) ? 1U : 0U;
             if ((turnSearchTargetReached != 0U) &&
                 (lineCaptureReady == 0U)) {
                 /* 目标角/里程只决定进入低速搜索，绝不等于找到出边。
@@ -3359,6 +3493,18 @@ static uint8_t square_service_turn(uint32_t nowMs)
 
             if (g_gimbalCaptureSettleCount >=
                 LAB_GIMBAL_CAPTURE_SETTLE_CONFIRM) {
+                /* 刹停会改变传感器相对线的位置。只有捕获线仍由左侧或中心
+                 * 探头真实看到时才允许向前对中；无线时继续保持停车。 */
+                if ((turnLineValid == 0U) ||
+                    (((g_lineMask &
+                       LAB_GIMBAL_TURN_LEFT_ENTRY_MASK) == 0U) &&
+                     (center_line_seen(g_lineMask) == 0U))) {
+                    if (elapsed >=
+                        LAB_GIMBAL_CAPTURE_BRAKE_MAX_MS) {
+                        square_abort("GIMBAL CAPTURE LINE LOST");
+                    }
+                    return 1U;
+                }
                 /* A 相测速没有实时方向。只有真实停稳后才清速度滤波，
                  * 再恢复转弯前的重载积分和重新武装正向破静摩擦。 */
                 ENCODER_ResetSpeedFeedback();
@@ -3387,9 +3533,9 @@ static uint8_t square_service_turn(uint32_t nowMs)
                 g_lineFilteredDelta = 0;
                 g_lineLostMs = 0U;
                 g_gimbalCaptureBestAbsError =
-                    (turnLineValid != 0U) ?
-                    abs_i16(turnLineError) : 32767;
+                    abs_i16(turnLineError);
                 g_gimbalCaptureProgressMs = nowMs;
+                g_gimbalCaptureLineLostMs = 0U;
                 g_squareState = SQUARE_STATE_CAPTURE_ALIGN;
                 g_squareStateStartMs = nowMs;
                 return 1U;
@@ -3405,18 +3551,37 @@ static uint8_t square_service_turn(uint32_t nowMs)
                 (turnLineValid != 0U) ?
                 abs_i16(turnLineError) : 32767;
 
-            if ((turnLineValid != 0U) &&
-                (absoluteError < g_gimbalCaptureBestAbsError)) {
+            if (turnLineValid == 0U) {
+                if (g_gimbalCaptureLineLostMs < 60000U) {
+                    g_gimbalCaptureLineLostMs = (uint16_t)(
+                        g_gimbalCaptureLineLostMs +
+                        LAB_CONTROL_PERIOD_MS);
+                }
+                /* 无灰度反馈时绝不向前猜线；给传感器 180 ms 的短暂恢复
+                 * 窗口，超时后安全停止，不再前进 1.2 秒。 */
+                g_leftPwm = 0;
+                g_rightPwm = 0;
+                g_leftTarget = 0;
+                g_rightTarget = 0;
+                MOTOR_Stop();
+                reset_pi_state();
+                if (g_gimbalCaptureLineLostMs >=
+                    LAB_GIMBAL_CAPTURE_LINE_LOST_MAX_MS) {
+                    square_abort("GIMBAL CAPTURE ALIGN LINE LOST");
+                }
+                return 1U;
+            }
+            g_gimbalCaptureLineLostMs = 0U;
+
+            if (absoluteError < g_gimbalCaptureBestAbsError) {
                 g_gimbalCaptureBestAbsError = absoluteError;
                 g_gimbalCaptureProgressMs = nowMs;
             }
 
-            if ((turnLineValid != 0U) &&
-                (center_line_seen(g_lineMask) != 0U) &&
+            if ((center_line_seen(g_lineMask) != 0U) &&
                 (absoluteError <= LAB_GIMBAL_CAPTURE_CENTER_ERROR) &&
-                ((g_turnYawReliable == 0U) ||
-                 (g_turnYawX10 >=
-                  LAB_GIMBAL_CAPTURE_CENTER_MIN_YAW_X10))) {
+                (g_turnYawX10 >=
+                 LAB_GIMBAL_CAPTURE_CENTER_MIN_YAW_X10)) {
                 if (g_turnCenterCount < 255U) {
                     g_turnCenterCount++;
                 }
@@ -3481,6 +3646,7 @@ static uint8_t square_service_turn(uint32_t nowMs)
         g_gimbalCaptureOuterMask = g_lineMask;
         g_gimbalCaptureOuterError = turnLineError;
         g_gimbalCaptureSettleCount = 0U;
+        g_gimbalCaptureLineLostMs = 0U;
         g_squareState = SQUARE_STATE_CAPTURE_BRAKE;
         g_squareStateStartMs = nowMs;
         g_lineTurnMmps = 0;
@@ -3569,6 +3735,14 @@ static uint8_t square_service_turn(uint32_t nowMs)
     /* 实际下发差速：左轮反方向、右轮正方向，形成逆时针偏航 */
     pwm = (g_squareState == SQUARE_STATE_TURN_FAST) ?
               g_turnFastPwm : g_turnSlowPwm;
+#if LAB_ENABLE_DUAL_PROFILE
+    if ((g_activeProfile == LAB_PROFILE_GIMBAL) &&
+        (g_turnYawReliable != 0U)) {
+        /* A continuous taper prevents the heavy platform from carrying the
+         * fixed FAST/SLOW torque through the new line. */
+        pwm = gimbal_turn_pwm_for_yaw(g_turnYawX10);
+    }
+#endif
     g_leftPwm = (int16_t)(-pwm);
     g_rightPwm = pwm;
     g_leftTarget = (int16_t)(-pwm);
@@ -3644,10 +3818,9 @@ static void update_closed_loop(uint32_t nowMs)
              (g_mode == LAB_MODE_SQUARE) &&
              (g_squareState == SQUARE_STATE_LINE)) ? 1U : 0U;
         uint8_t gimbalEnvelopeActive =
-            ((gimbalLineControl != 0U) ||
-             ((g_activeProfile == LAB_PROFILE_GIMBAL) &&
-              (g_mode == LAB_MODE_SQUARE) &&
-              (g_squareState == SQUARE_STATE_CAPTURE_ALIGN))) ? 1U : 0U;
+            ((g_activeProfile == LAB_PROFILE_GIMBAL) &&
+             (g_mode == LAB_MODE_SQUARE) &&
+             (g_squareState == SQUARE_STATE_CAPTURE_ALIGN)) ? 1U : 0U;
         int16_t gimbalLineLimit =
             LAB_GIMBAL_LINE_MIN_TURN_LIMIT_MMPS;
         int16_t gimbalTotalLimit =
@@ -3681,6 +3854,11 @@ static void update_closed_loop(uint32_t nowMs)
             (g_mode == LAB_MODE_SQUARE) &&
             (g_squareState == SQUARE_STATE_CAPTURE_ALIGN)) {
             lineLostStopMs = LAB_GIMBAL_CAPTURE_LINE_LOST_MAX_MS;
+        } else if ((g_activeProfile == LAB_PROFILE_GIMBAL) &&
+                   (g_mode == LAB_MODE_SQUARE) &&
+                   (g_squareState == SQUARE_STATE_LINE)) {
+            /* Keep the V4 600 ms recovery window on ordinary lines. */
+            lineLostStopMs = LAB_LINE_LOST_STOP_MS;
         }
 #endif
 
@@ -3708,6 +3886,11 @@ static void update_closed_loop(uint32_t nowMs)
                                    startRampMs);
         }
 
+#if LAB_ENABLE_DUAL_PROFILE
+        /* 重云台首条直边先用保守公共速度建立稳定航向；名义 120 mm/s
+         * 仍保留给后续验证，避免起步阶段惯量把灰度修正打成大幅横摆。 */
+#endif
+
         /* 读取灰度掩码并计算“线居中误差” */
         g_lineMask = (uint8_t)(SENSOR_GetRawMask() &
                                LAB_LINE_SENSOR_VALID_MASK);
@@ -3715,7 +3898,7 @@ static void update_closed_loop(uint32_t nowMs)
         g_lineValid = valid;
 
 #if LAB_ENABLE_DUAL_PROFILE
-        if ((gimbalLineControl != 0U) && (valid != 0U)) {
+        if ((gimbalEnvelopeActive != 0U) && (valid != 0U)) {
             int16_t absoluteError = abs_i16(g_lineError);
             int16_t scheduledSpeed = g_testSpeed;
 
@@ -3939,7 +4122,6 @@ static void update_closed_loop(uint32_t nowMs)
             }
             if (g_lineLostMs >= LAB_LINE_RECOVERY_MS) {
                 /* 丢线早期：降速巡航、修零 */
-                g_lineTurnMmps = 0;
                 g_lineFilteredDelta = 0;
                 if (baseTarget > LAB_LINE_RECOVERY_MMPS) {
                     baseTarget = LAB_LINE_RECOVERY_MMPS;
@@ -3949,6 +4131,24 @@ static void update_closed_loop(uint32_t nowMs)
 
         /* KICK 只作用于当次输出，绝不能写回控制器内部状态后逐周期累加。 */
         outputTurn = g_lineTurnMmps;
+#if LAB_ENABLE_DUAL_PROFILE
+        if (gimbalLineControl != 0U) {
+            int16_t syncTurn = gimbal_update_sync_turn();
+
+            /* GSTART 只负责首边低速起步的已知静态偏置；达到可观测
+             * 轮速后交给每条边重新置零的 SYNC/BIAS。 */
+            outputTurn = clamp_i16(
+                (int32_t)outputTurn + syncTurn,
+                (int16_t)-LAB_LINE_TURN_LIMIT_MMPS,
+                LAB_LINE_TURN_LIMIT_MMPS);
+            /* Static-friction breakaway is deliberately straight: gray
+             * sensor noise cannot bias the first wheel pulse. */
+            if ((g_gimbalLeftBreakawayDone == 0U) ||
+                (g_gimbalRightBreakawayDone == 0U)) {
+                outputTurn = 0;
+            }
+        }
+#endif
         if ((g_lineKickMmps != 0) &&
             ((int32_t)(g_lineKickEndMs - nowMs) > 0)) {
             outputTurn = clamp_i16(
@@ -3962,7 +4162,7 @@ static void update_closed_loop(uint32_t nowMs)
 
 #if LAB_ENABLE_DUAL_PROFILE
         if (gimbalEnvelopeActive != 0U) {
-            /* Guard8：GIMBAL 普通 LINE 和 CAPTURE_ALIGN 都只使用灰度
+            /* Guard9：GIMBAL 普通 LINE 和 CAPTURE_ALIGN 都只使用灰度
              * g_lineTurnMmps。GSTART 仍保存在 Flash，IMU 仍做 25°硬保护，
              * 但二者都不能在这里叠加轮差。 */
             outputTurn = clamp_i16(
@@ -3974,6 +4174,13 @@ static void update_closed_loop(uint32_t nowMs)
 
         /* 最终：基础速度 +/- 修正得到左右目标，并限制不会让目标变成负值 */
         maxTurn = (int16_t)(baseTarget - 20);
+#if LAB_ENABLE_DUAL_PROFILE
+        if (gimbalLineControl != 0U) {
+            /* V4 keeps full correction authority; launch straightness is
+             * handled by the encoder breakaway lock above. */
+            maxTurn = baseTarget;
+        }
+#endif
         if (maxTurn < 0) maxTurn = 0;
         outputTurn = clamp_i16(outputTurn, -maxTurn, maxTurn);
         g_leftTarget = clamp_i16((int32_t)baseTarget + outputTurn,

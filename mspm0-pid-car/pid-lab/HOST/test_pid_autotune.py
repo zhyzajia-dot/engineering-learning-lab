@@ -307,6 +307,102 @@ class AlgorithmTests(unittest.TestCase):
         self.assertIn("g_turnCapturedByLine = lineCaptureReady", source)
         self.assertIn("(g_activeProfile != LAB_PROFILE_GIMBAL)", source)
 
+    def test_guard9_turn_gate_requires_signed_ordered_capture(self) -> None:
+        source = (
+            Path(__file__).resolve().parent.parent / "LAB" / "lab_ctrl.c"
+        ).read_text(encoding="utf-8")
+        for required in (
+            "LAB_GIMBAL_TURN_OUTGOING_MIN_YAW_X10  750",
+            "LAB_GIMBAL_TURN_OUTGOING_MAX_YAW_X10 1100",
+            "LAB_GIMBAL_TURN_RIGHT_DEPART_MASK     0x60U",
+            "LAB_GIMBAL_TURN_LEFT_ENTRY_MASK       0x07U",
+            "LAB_GIMBAL_TURN_LEFT_ENTRY_MAX_ERROR   -6",
+            "LAB_GIMBAL_TURN_GAP_CONFIRM              2U",
+            "LAB_GIMBAL_TURN_TRAVEL_MIN_NUM            3",
+            "LAB_GIMBAL_TURN_TRAVEL_MAX_NUM            9",
+            'square_abort("GIMBAL IMU LOST")',
+            'square_abort("GIMBAL IMU UNRELIABLE")',
+            'square_abort("GIMBAL CAPTURE TRAVEL LIMIT")',
+            'square_abort("GIMBAL CAPTURE LINE LOST")',
+            'square_abort("GIMBAL CAPTURE ALIGN LINE LOST")',
+        ):
+            self.assertIn(required, source)
+        yaw_start = source.index("yaw = IMU_GetRelativeYawX10();")
+        yaw_read = source[
+            yaw_start:
+            source.index("elapsed = nowMs - g_squareStateStartMs;", yaw_start)
+        ]
+        self.assertNotIn("if (yaw < 0)", yaw_read)
+
+        def capture_result(
+            samples: list[tuple[bool, int, int, int]],
+            turn_distance: int = 98,
+        ) -> str:
+            departing = False
+            gap_count = 0
+            gap_seen = False
+            outgoing_count = 0
+            for imu_ready, yaw_x10, travel_mm, mask in samples:
+                if not imu_ready:
+                    return "ABORT"
+                if yaw_x10 > 1150 or travel_mm * 5 > turn_distance * 9:
+                    return "ABORT"
+                error, valid = gui.line_error_from_mask(mask)
+                if (
+                    valid and mask & 0x60 and error >= 10 and
+                    yaw_x10 >= 500
+                ):
+                    departing = True
+                if departing and not valid and yaw_x10 >= 650:
+                    gap_count += 1
+                    gap_seen = gap_count >= 2
+                elif not gap_seen:
+                    gap_count = 0
+                candidate = (
+                    departing and gap_seen and valid and mask & 0x07 and
+                    error <= -6 and 750 <= yaw_x10 <= 1100 and
+                    travel_mm * 4 >= turn_distance * 3 and
+                    travel_mm * 5 <= turn_distance * 9
+                )
+                outgoing_count = outgoing_count + 1 if candidate else 0
+                if outgoing_count >= 3:
+                    return "BRAKE"
+            return "SEARCH"
+
+        valid_history = [
+            (True, 560, 70, 64),
+            (True, 700, 90, 0),
+            (True, 720, 92, 0),
+            (True, 815, 108, 1),
+            (True, 863, 110, 3),
+            (True, 887, 112, 2),
+        ]
+        self.assertEqual(capture_result(valid_history), "BRAKE")
+        self.assertEqual(capture_result([
+            (True, 560, 70, 64),
+            (True, 700, 90, 0),
+            (True, 720, 92, 0),
+            (True, 902, 142, 0),
+        ]), "SEARCH")
+        self.assertEqual(capture_result([
+            (True, 560, 70, 64),
+            (True, 700, 90, 0),
+            (True, 720, 92, 0),
+            (True, 850, 110, 24),
+            (True, 870, 112, 24),
+            (True, 890, 114, 24),
+        ]), "SEARCH")
+        self.assertEqual(capture_result([
+            (True, 560, 70, 64),
+            (True, 700, 90, 0),
+            (True, 720, 92, 0),
+            (True, 1600, 170, 64),
+        ]), "ABORT")
+        self.assertEqual(capture_result([
+            (True, 560, 70, 64),
+            (False, 600, 80, 0),
+        ]), "ABORT")
+
     def test_gimbal_line_search_starts_from_conservative_bootstrap(self) -> None:
         self.assertEqual(gui.GIMBAL_BOOTSTRAP_LINE_PAIR, (3000, 800))
         self.assertEqual(gui.GIMBAL_LINE_KP_SAFE_RANGE, (2000, 5000))
@@ -657,18 +753,18 @@ class CliTests(unittest.TestCase):
             cli.update_gimbal_square_target_guard(sample, False, count), 0
         )
 
-    def test_guard8_valid_line_has_single_gray_controller_owner(self) -> None:
+    def test_guard9_valid_line_has_single_gray_controller_owner(self) -> None:
         source = (
             Path(__file__).resolve().parent.parent / "LAB" / "lab_ctrl.c"
         ).read_text(encoding="utf-8")
         self.assertIn("LAB_LINE_SENSOR_VALID_MASK   0x7FU", source)
-        self.assertIn("LAB_GIMBAL_GUARD_VERSION               8", source)
+        self.assertIn("LAB_GIMBAL_GUARD_VERSION              10", source)
         self.assertIn("uint8_t gimbalLineControl", source)
         self.assertIn(
-            "if ((gimbalLineControl != 0U) && (valid != 0U))", source
+            "if ((gimbalEnvelopeActive != 0U) && (valid != 0U))", source
         )
         self.assertIn("outputTurn = g_lineTurnMmps;", source)
-        self.assertIn("LAB_GIMBAL_LINE_SPEED_FLOOR_MMPS    80", source)
+        self.assertIn("LAB_GIMBAL_LINE_SPEED_FLOOR_MMPS   100", source)
         self.assertIn("LAB_GIMBAL_LEFT_BREAKAWAY_PWM          80", source)
         self.assertIn("LAB_GIMBAL_RIGHT_BREAKAWAY_PWM         50", source)
         self.assertIn("g_gimbalStartupSeedMmps", source)
@@ -685,7 +781,7 @@ class CliTests(unittest.TestCase):
         ):
             self.assertNotIn(retired, source)
 
-    def test_guard8_capture_align_does_not_stack_startup_or_imu_turn(
+    def test_guard9_capture_align_does_not_stack_startup_or_imu_turn(
         self,
     ) -> None:
         source = (
@@ -696,7 +792,7 @@ class CliTests(unittest.TestCase):
             "int16_t gimbalLineLimit", selector_start
         )
         selector = source[selector_start:selector_end]
-        self.assertIn("gimbalLineControl", selector)
+        self.assertIn("gimbalEnvelopeActive", selector)
         self.assertIn("SQUARE_STATE_CAPTURE_ALIGN", selector)
 
         output_start = source.index("outputTurn = g_lineTurnMmps;")
@@ -724,7 +820,7 @@ class CliTests(unittest.TestCase):
         )
 
     def test_gimbal_square_requires_guard_firmware_before_motion(self) -> None:
-        self.assertEqual(gui.GIMBAL_GUARD_VERSION, 8)
+        self.assertEqual(gui.GIMBAL_GUARD_VERSION, 10)
         with self.assertRaisesRegex(RuntimeError, "guard firmware"):
             cli.require_gimbal_square_guard(
                 {"PROFILE": gui.PROFILE_IDS["GIMBAL"], "FLASHVER": 3},
@@ -790,7 +886,7 @@ class CliTests(unittest.TestCase):
             corner_count=0,
             square_state=0,
         )
-        # Guard8 never turns a valid gray-line error into a host STOP.
+        # Guard9 never turns a valid gray-line error into a host STOP.
         self.assertEqual(
             cli.update_gimbal_hard_yaw_guard(sample, True, 0), 0
         )
@@ -1277,7 +1373,7 @@ class CliTests(unittest.TestCase):
         tuner._read_parameters.return_value = bootstrap
         tuner.running = False
         statuses: queue.Queue[str] = queue.Queue()
-        statuses.put("GIMBAL COMPLETE: simulated Guard8 result")
+        statuses.put("GIMBAL COMPLETE: simulated Guard9 result")
         args = mock.Mock(speed=120)
 
         with (

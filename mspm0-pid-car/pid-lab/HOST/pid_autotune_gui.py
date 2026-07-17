@@ -122,18 +122,19 @@ FIRMWARE_DEFAULT_PARAMETERS = {
 
 PROFILE_IDS = {"LIGHT": 0, "GIMBAL": 1}
 
-GIMBAL_GUARD_VERSION = 8
+GIMBAL_GUARD_VERSION = 10
 GIMBAL_SQUARE_TARGET_DELTA_GUARD_MMPS = 160
 GIMBAL_SQUARE_TARGET_DELTA_CONFIRM = 3
-# Guard8 leaves gray-line recovery to firmware. The host only mirrors the
-# firmware's sustained 25-degree yaw boundary as a communication backstop.
-GIMBAL_HARD_YAW_GUARD_X10 = 250
+# Guard10 leaves gray-line recovery to firmware. The host keeps only a broad
+# 60-degree communication backstop so a normal heavy-platform turn is not
+# stopped at the old 25-degree threshold.
+GIMBAL_HARD_YAW_GUARD_X10 = 600
 GIMBAL_HARD_YAW_GUARD_CONFIRM = 3
 
 PARAMETER_DISPLAY_ORDER = tuple(FIRMWARE_DEFAULT_PARAMETERS) + ("GSTART",)
 GIMBAL_RUNTIME_PARAMETERS = tuple(FIRMWARE_DEFAULT_PARAMETERS) + ("GSTART",)
 
-# Guard8 GIMBAL autotune is one continuous square session.  It uses short,
+# Guard9 GIMBAL autotune is one continuous square session.  It uses short,
 # bounded coordinate trials on straight edges instead of spending one full lap
 # on every pair.  A parameter is changed only after a stable centered window.
 GIMBAL_AUTO_SQUARE_LAPS = 3
@@ -180,7 +181,7 @@ def update_gimbal_hard_yaw_guard(
     enabled: bool,
     consecutive: int,
 ) -> int:
-    """Count only sustained 25-degree yaw; gray error is never a host STOP."""
+    """Count only sustained 60-degree yaw; gray error is never a host STOP."""
     if (
         not enabled or sample is None or sample.mode != "SQUARE" or
         sample.square_state != 0
@@ -245,7 +246,7 @@ def parse_turn_event(line: str) -> dict[str, int | str] | None:
             "turn_angle_x10": turn_angle_x10,
             "turn_distance_mm": turn_distance_mm,
         }
-    # Guard8 may report a search observation before capture.  Older Guard8
+    # Guard9 may report a search observation before capture.  Older firmware
     # builds do not emit it, so callers must treat this event as optional.
     if parts[0:1] == ["TURN SEARCH"]:
         if len(parts) not in (5, 6):
@@ -294,7 +295,7 @@ def is_gimbal_score_window_eligible(
     sample: "PidSample | None",
     requested_speed_mmps: int,
 ) -> bool:
-    """Use the same post-ramp straight window for every Guard8 score."""
+    """Use the same post-ramp straight window for every Guard9 score."""
     if (
         sample is None or sample.mode != "SQUARE" or
         sample.square_state != 0 or
@@ -302,7 +303,7 @@ def is_gimbal_score_window_eligible(
     ):
         return False
     # Invalid-line frames intentionally remain eligible so _score_line can
-    # apply its lost-ratio penalty. Guard8 may also lower targets on a large
+    # apply its lost-ratio penalty. Guard9 may also lower targets on a large
     # valid gray error, so target values are not used as an eligibility gate.
     return requested_speed_mmps > 0
 
@@ -311,7 +312,7 @@ def is_gimbal_scoreable_straight(
     sample: "PidSample | None",
     requested_speed_mmps: int,
 ) -> bool:
-    """Compatibility name for the Guard8 score-window eligibility helper."""
+    """Compatibility name for the Guard9 score-window eligibility helper."""
     return is_gimbal_score_window_eligible(sample, requested_speed_mmps)
 
 
@@ -743,7 +744,7 @@ class AutoTuner:
         speed_mmps: int = 120,
         rollback_snapshot: dict[str, int] | None = None,
     ) -> None:
-        """Start the Guard8 single-session GIMBAL line/turn autotune."""
+        """Start the Guard9 single-session GIMBAL line/turn autotune."""
         if self.running:
             return
         if not 80 <= speed_mmps <= 200:
@@ -972,7 +973,7 @@ class AutoTuner:
         parameters: dict[str, int],
         speed_mmps: int,
     ) -> None:
-        """Enable Guard8 hard-yaw/target backstops for a GIMBAL session."""
+        """Enable Guard9 hard-yaw/target backstops for a GIMBAL session."""
         is_gimbal = parameters.get("PROFILE") == PROFILE_IDS["GIMBAL"]
         self.gimbal_square_guard_enabled = (
             is_gimbal and speed_mmps <= 200
@@ -1078,7 +1079,7 @@ class AutoTuner:
         line_kp: int,
         line_kd: int,
     ) -> list[tuple[str, int]]:
-        """Build bounded one-coordinate-at-a-time Guard8 line trials."""
+        """Build bounded one-coordinate-at-a-time Guard9 line trials."""
         trials: list[tuple[str, int]] = []
         for name, center, step, bounds in (
             (
@@ -1102,7 +1103,7 @@ class AutoTuner:
         tune_speed_mmps: int,
         rollback_snapshot: dict[str, int] | None,
     ) -> None:
-        """Tune Guard8 GIMBAL in one uninterrupted square session.
+        """Tune Guard9 GIMBAL in one uninterrupted square session.
 
         The first straight edge supplies the incumbent baseline.  Each
         challenger changes only LINEKP or LINEKD, and only after a centered
@@ -1229,7 +1230,7 @@ class AutoTuner:
                 tune_speed_mmps, GIMBAL_AUTO_SQUARE_LAPS
             )
             self._status(
-                "GIMBAL Guard8 continuous autotune started: first straight "
+                "GIMBAL Guard9 continuous autotune started: first straight "
                 f"edge is the baseline; {len(trials)} bounded single-parameter "
                 "trials will run without repositioning"
             )
@@ -1265,7 +1266,7 @@ class AutoTuner:
                         GIMBAL_REQUIRED_CENTERED_CORNERS
                     ):
                         raise RuntimeError(
-                            "square ended before Guard8 autotune validation "
+                            "square ended before Guard9 autotune validation "
                             "completed"
                         )
                     break
@@ -1609,12 +1610,12 @@ class AutoTuner:
                             break
             else:
                 raise TimeoutError(
-                    "Guard8 continuous autotune did not finish within "
+                    "Guard9 continuous autotune did not finish within "
                     f"{GIMBAL_AUTO_TIMEOUT_SECONDS:g}s"
                 )
 
             if incumbent_score is None or final_validation_score is None:
-                raise RuntimeError("Guard8 final validation was not completed")
+                raise RuntimeError("Guard9 final validation was not completed")
             if len(successful_center_corners) < (
                 GIMBAL_REQUIRED_CENTERED_CORNERS
             ):
@@ -1769,7 +1770,7 @@ class AutoTuner:
                 encoding="utf-8",
             )
             self._status(
-                "GIMBAL COMPLETE: one-session Guard8 tune saved and verified; "
+                "GIMBAL COMPLETE: one-session Guard9 tune saved and verified; "
                 f"LINEKP={incumbent['LINEKP']} "
                 f"LINEKD={incumbent['LINEKD']}, centered corners="
                 f"{len(successful_center_corners)}, result={result_path}"
@@ -2281,7 +2282,7 @@ class AutoTuner:
     ) -> float:
         """Add conservative IMU observation penalties to GIMBAL scoring.
 
-        IMU never steers the Guard8 straight controller.  Relative yaw is only
+        IMU never steers the Guard9 straight controller.  Relative yaw is only
         an independent observer that helps distinguish a quiet gray-error
         average from real left/right snake motion.
         """

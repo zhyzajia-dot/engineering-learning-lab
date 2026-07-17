@@ -1,6 +1,10 @@
 !Debug/
 Debug/*
 !Debug/pid_lab_mspm0.hex
+!Debug/pid_lab_mspm0_guard9_signed_turngate_20260717.hex
+!Debug/pid_lab_mspm0_guard9_lineenvelope_20260717.hex
+!Debug/pid_lab_mspm0_guard9_firstedge100_20260717.hex
+!Debug/pid_lab_mspm0_guard9_recovery_pid_20260717.hex
 !Debug/pid_lab_mspm0_guard8_gray_online_20260716.hex
 !Debug/pid_lab_mspm0_guard7_progress_recovery_20260716.hex
 !Debug/pid_lab_mspm0_guard6_capture_align_20260716.hex
