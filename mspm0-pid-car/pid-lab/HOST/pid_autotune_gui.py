@@ -89,11 +89,11 @@ STRAIGHT_BIAS_MMPS = 50
 # 循迹参数的安全范围（防止越界写入）
 LINE_KP_SAFE_RANGE = (2500, 14000)
 LINE_KD_SAFE_RANGE = (500, 6000)
-GIMBAL_BOOTSTRAP_LINE_PAIR = (3000, 800)
-GIMBAL_LINE_KP_SAFE_RANGE = (2000, 5000)
-GIMBAL_LINE_KD_SAFE_RANGE = (500, 2000)
-GIMBAL_LINE_KP_LOCAL_STEP = 500
-GIMBAL_LINE_KD_LOCAL_STEP = 300
+GIMBAL_BOOTSTRAP_LINE_PAIR = (8250, 2250)
+GIMBAL_LINE_KP_SAFE_RANGE = (5000, 10000)
+GIMBAL_LINE_KD_SAFE_RANGE = (1200, 3500)
+GIMBAL_LINE_KP_LOCAL_STEP = 100
+GIMBAL_LINE_KD_LOCAL_STEP = 100
 
 # 自动整定评分公式的版本号；变更打分逻辑时同步 +1，
 # 旧的 champion.json 在 score_version 不匹配时会被忽略
@@ -122,10 +122,10 @@ FIRMWARE_DEFAULT_PARAMETERS = {
 
 PROFILE_IDS = {"LIGHT": 0, "GIMBAL": 1}
 
-GIMBAL_GUARD_VERSION = 10
+GIMBAL_GUARD_VERSION = 19
 GIMBAL_SQUARE_TARGET_DELTA_GUARD_MMPS = 160
 GIMBAL_SQUARE_TARGET_DELTA_CONFIRM = 3
-# Guard10 leaves gray-line recovery to firmware. The host keeps only a broad
+# Guard19 leaves gray-line recovery to firmware. The host keeps only a broad
 # 60-degree communication backstop so a normal heavy-platform turn is not
 # stopped at the old 25-degree threshold.
 GIMBAL_HARD_YAW_GUARD_X10 = 600
@@ -139,10 +139,10 @@ GIMBAL_RUNTIME_PARAMETERS = tuple(FIRMWARE_DEFAULT_PARAMETERS) + ("GSTART",)
 # on every pair.  A parameter is changed only after a stable centered window.
 GIMBAL_AUTO_SQUARE_LAPS = 3
 GIMBAL_AUTO_TIMEOUT_SECONDS = 240.0
-GIMBAL_BASELINE_SAMPLES = 35
-GIMBAL_TRIAL_MIN_SAMPLES = 18
-GIMBAL_TRIAL_TARGET_SAMPLES = 40
-GIMBAL_TRIAL_SETTLE_SAMPLES = 8
+GIMBAL_BASELINE_SAMPLES = 50
+GIMBAL_TRIAL_MIN_SAMPLES = 30
+GIMBAL_TRIAL_TARGET_SAMPLES = 60
+GIMBAL_TRIAL_SETTLE_SAMPLES = 20
 GIMBAL_VALIDATION_SAMPLES = 70
 GIMBAL_VALIDATION_MIN_EDGES = 2
 GIMBAL_REQUIRED_CENTERED_CORNERS = 4
@@ -1033,7 +1033,12 @@ class AutoTuner:
             except (IndexError, ValueError):
                 raise RuntimeError(f"invalid line sensor report: {sensor_line}")
             error, valid = line_error_from_mask(mask)
-            if parts[1] != "OK" or not valid or abs(error) > 4:
+            # Firmware's capture/center logic treats |error| <= 6 as the
+            # usable center band.  Startup must use the same band: a stopped
+            # car can settle on mask48/error6 while still being safely on the
+            # line.  The stricter <=4 window remains reserved for live trial
+            # switching below.
+            if parts[1] != "OK" or not valid or abs(error) > 6:
                 raise RuntimeError(
                     "place the car centered on the black line before autotune: "
                     f"mask={mask}, error={error}, report={sensor_line}"
@@ -1083,12 +1088,12 @@ class AutoTuner:
         trials: list[tuple[str, int]] = []
         for name, center, step, bounds in (
             (
-                "LINEKP", line_kp, GIMBAL_LINE_KP_LOCAL_STEP,
-                GIMBAL_LINE_KP_SAFE_RANGE,
-            ),
-            (
                 "LINEKD", line_kd, GIMBAL_LINE_KD_LOCAL_STEP,
                 GIMBAL_LINE_KD_SAFE_RANGE,
+            ),
+            (
+                "LINEKP", line_kp, GIMBAL_LINE_KP_LOCAL_STEP,
+                GIMBAL_LINE_KP_SAFE_RANGE,
             ),
         ):
             for offset in (-step, step):
@@ -1127,7 +1132,7 @@ class AutoTuner:
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             self.session_dir = (
                 Path(__file__).parent / "logs" /
-                f"gimbal_auto_guard8_{stamp}"
+                f"gimbal_auto_guard{GIMBAL_GUARD_VERSION}_{stamp}"
             )
             self.session_dir.mkdir(parents=True, exist_ok=True)
             self.link.set_trace_path(self.session_dir / "protocol_trace.log")
@@ -1230,7 +1235,7 @@ class AutoTuner:
                 tune_speed_mmps, GIMBAL_AUTO_SQUARE_LAPS
             )
             self._status(
-                "GIMBAL Guard9 continuous autotune started: first straight "
+                "GIMBAL Guard19 continuous autotune started: first straight "
                 f"edge is the baseline; {len(trials)} bounded single-parameter "
                 "trials will run without repositioning"
             )
@@ -1266,7 +1271,7 @@ class AutoTuner:
                         GIMBAL_REQUIRED_CENTERED_CORNERS
                     ):
                         raise RuntimeError(
-                            "square ended before Guard9 autotune validation "
+                                "square ended before Guard19 autotune validation "
                             "completed"
                         )
                     break
@@ -1451,7 +1456,12 @@ class AutoTuner:
                             )
 
                     if candidate is not None and pending_reject_reason:
-                        if center_streak >= LINE_SWITCH_CENTER_SAMPLES:
+                        rollback_ready = (
+                            center_streak >= LINE_SWITCH_CENTER_SAMPLES or
+                            len(candidate_samples) >=
+                            GIMBAL_TRIAL_MIN_SAMPLES
+                        )
+                        if rollback_ready:
                             name = str(candidate["name"])
                             value = int(candidate["value"])
                             self._send_set(name, incumbent[name])
@@ -1610,12 +1620,12 @@ class AutoTuner:
                             break
             else:
                 raise TimeoutError(
-                    "Guard9 continuous autotune did not finish within "
+                    "Guard19 continuous autotune did not finish within "
                     f"{GIMBAL_AUTO_TIMEOUT_SECONDS:g}s"
                 )
 
             if incumbent_score is None or final_validation_score is None:
-                raise RuntimeError("Guard9 final validation was not completed")
+                raise RuntimeError("Guard19 final validation was not completed")
             if len(successful_center_corners) < (
                 GIMBAL_REQUIRED_CENTERED_CORNERS
             ):
@@ -1770,7 +1780,7 @@ class AutoTuner:
                 encoding="utf-8",
             )
             self._status(
-                "GIMBAL COMPLETE: one-session Guard9 tune saved and verified; "
+                "GIMBAL COMPLETE: one-session Guard19 tune saved and verified; "
                 f"LINEKP={incumbent['LINEKP']} "
                 f"LINEKD={incumbent['LINEKD']}, centered corners="
                 f"{len(successful_center_corners)}, result={result_path}"
@@ -2436,6 +2446,29 @@ class AutoTuner:
             lambda item: item == expected or item.startswith("ERR "),
             f"SET {name}",
         )
+        if reply is not None and reply.startswith("ERR COMMAND"):
+            # An explicit parser rejection is different from a lost ACK.
+            # Repeating the same token can repeat a malformed frame left in
+            # the live telemetry path; use a fresh token after draining it.
+            self.link.drain_data()
+            time.sleep(0.05)
+            for _ in range(2):
+                token = self._next_tune_token()
+                expected = f"SA,{token},{name},{value}"
+                reply = self._request_with_retry(
+                    f"SET {name} {value} {token}",
+                    lambda item, expected=expected: (
+                        item == expected or item.startswith("ERR ")
+                    ),
+                    f"SET {name} (fresh token)",
+                    retries=1,
+                )
+                if reply == expected:
+                    return
+                if reply is None or not reply.startswith("ERR COMMAND"):
+                    break
+                self.link.drain_data()
+                time.sleep(0.05)
         if reply != expected:
             raise RuntimeError(
                 f"MCU rejected SET {name} {value}: {reply or 'timeout'}"

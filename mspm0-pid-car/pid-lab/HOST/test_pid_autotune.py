@@ -134,6 +134,26 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(len(link.commands), 2)
         self.assertEqual(link.commands[0], link.commands[1])
 
+    def test_set_changes_token_after_explicit_command_rejection(self) -> None:
+        rejected = False
+
+        def respond(command: str, _attempt: int) -> list[str]:
+            nonlocal rejected
+            if command.startswith("SET "):
+                _, name, value, token = command.split()
+                if not rejected:
+                    rejected = True
+                    return ["ERR COMMAND; SEND HELP"]
+                return [f"SA,{token},{name},{value}"]
+            return []
+
+        link = FakeLink(respond)
+        tuner = make_tuner(link)
+        with mock.patch.object(gui, "COMMAND_ACK_TIMEOUT", 0.01):
+            tuner._send_set("LKP", 150)
+        self.assertGreaterEqual(len(link.commands), 2)
+        self.assertNotEqual(link.commands[0], link.commands[-1])
+
     def test_profile_selection_requires_flash_v3_readback(self) -> None:
         def respond(command: str, _attempt: int) -> list[str]:
             if command == "PROFILE GIMBAL":
@@ -319,7 +339,7 @@ class AlgorithmTests(unittest.TestCase):
             "LAB_GIMBAL_TURN_LEFT_ENTRY_MAX_ERROR   -6",
             "LAB_GIMBAL_TURN_GAP_CONFIRM              2U",
             "LAB_GIMBAL_TURN_TRAVEL_MIN_NUM            3",
-            "LAB_GIMBAL_TURN_TRAVEL_MAX_NUM            9",
+            "LAB_GIMBAL_TURN_TRAVEL_MAX_NUM            3",
             'square_abort("GIMBAL IMU LOST")',
             'square_abort("GIMBAL IMU UNRELIABLE")',
             'square_abort("GIMBAL CAPTURE TRAVEL LIMIT")',
@@ -345,15 +365,15 @@ class AlgorithmTests(unittest.TestCase):
             for imu_ready, yaw_x10, travel_mm, mask in samples:
                 if not imu_ready:
                     return "ABORT"
-                if yaw_x10 > 1150 or travel_mm * 5 > turn_distance * 9:
+                if yaw_x10 > 1150 or travel_mm > turn_distance * 3:
                     return "ABORT"
                 error, valid = gui.line_error_from_mask(mask)
                 if (
                     valid and mask & 0x60 and error >= 10 and
-                    yaw_x10 >= 500
+                    yaw_x10 >= 350
                 ):
                     departing = True
-                if departing and not valid and yaw_x10 >= 650:
+                if departing and not valid and yaw_x10 >= 450:
                     gap_count += 1
                     gap_seen = gap_count >= 2
                 elif not gap_seen:
@@ -362,7 +382,7 @@ class AlgorithmTests(unittest.TestCase):
                     departing and gap_seen and valid and mask & 0x07 and
                     error <= -6 and 750 <= yaw_x10 <= 1100 and
                     travel_mm * 4 >= turn_distance * 3 and
-                    travel_mm * 5 <= turn_distance * 9
+                    travel_mm <= turn_distance * 3
                 )
                 outgoing_count = outgoing_count + 1 if candidate else 0
                 if outgoing_count >= 3:
@@ -396,17 +416,17 @@ class AlgorithmTests(unittest.TestCase):
             (True, 560, 70, 64),
             (True, 700, 90, 0),
             (True, 720, 92, 0),
-            (True, 1600, 170, 64),
+            (True, 1600, 300, 64),
         ]), "ABORT")
         self.assertEqual(capture_result([
             (True, 560, 70, 64),
             (False, 600, 80, 0),
         ]), "ABORT")
 
-    def test_gimbal_line_search_starts_from_conservative_bootstrap(self) -> None:
-        self.assertEqual(gui.GIMBAL_BOOTSTRAP_LINE_PAIR, (3000, 800))
-        self.assertEqual(gui.GIMBAL_LINE_KP_SAFE_RANGE, (2000, 5000))
-        self.assertEqual(gui.GIMBAL_LINE_KD_SAFE_RANGE, (500, 2000))
+    def test_gimbal_line_search_starts_from_historical_champion(self) -> None:
+        self.assertEqual(gui.GIMBAL_BOOTSTRAP_LINE_PAIR, (8250, 2250))
+        self.assertEqual(gui.GIMBAL_LINE_KP_SAFE_RANGE, (5000, 10000))
+        self.assertEqual(gui.GIMBAL_LINE_KD_SAFE_RANGE, (1200, 3500))
 
     def test_line_mask_error_matches_firmware_and_masks_sensor_8(self) -> None:
         self.assertEqual(gui.line_error_from_mask(24), (0, True))
@@ -428,7 +448,7 @@ class AlgorithmTests(unittest.TestCase):
     def test_line_preflight_rejects_off_center_mask_before_motion(self) -> None:
         def respond(command: str, _attempt: int) -> list[str]:
             if command == "SENSOR":
-                return ["SENSOR,OK,48,0,93,4,48"]
+                return ["SENSOR,OK,64,0,93,36,64"]
             return []
 
         link = FakeLink(respond)
@@ -437,6 +457,15 @@ class AlgorithmTests(unittest.TestCase):
             tuner._verify_centered_line_sensor()
         self.assertFalse(any(command.startswith("SQUARE")
                              for command in link.commands))
+
+    def test_line_preflight_accepts_firmware_center_edge(self) -> None:
+        def respond(command: str, _attempt: int) -> list[str]:
+            if command == "SENSOR":
+                return ["SENSOR,OK,48,0,93,6,48"]
+            return []
+
+        tuner = make_tuner(FakeLink(respond))
+        tuner._verify_centered_line_sensor()
 
     def test_passive_candidate_sends_no_kick(self) -> None:
         def centered_sample(time_ms: int, corner: int = 0,
@@ -753,46 +782,62 @@ class CliTests(unittest.TestCase):
             cli.update_gimbal_square_target_guard(sample, False, count), 0
         )
 
-    def test_guard9_valid_line_has_single_gray_controller_owner(self) -> None:
+    def test_guard10_valid_line_has_single_gray_controller_owner(self) -> None:
         source = (
             Path(__file__).resolve().parent.parent / "LAB" / "lab_ctrl.c"
         ).read_text(encoding="utf-8")
         self.assertIn("LAB_LINE_SENSOR_VALID_MASK   0x7FU", source)
-        self.assertIn("LAB_GIMBAL_GUARD_VERSION              10", source)
+        self.assertIn("LAB_GIMBAL_GUARD_VERSION              19", source)
         self.assertIn("uint8_t gimbalLineControl", source)
         self.assertIn(
-            "if ((gimbalEnvelopeActive != 0U) && (valid != 0U))", source
+            "if ((gimbalLineControl != 0U) && (valid != 0U))", source
         )
         self.assertIn("outputTurn = g_lineTurnMmps;", source)
-        self.assertIn("LAB_GIMBAL_LINE_SPEED_FLOOR_MMPS   100", source)
-        self.assertIn("LAB_GIMBAL_LEFT_BREAKAWAY_PWM          80", source)
-        self.assertIn("LAB_GIMBAL_RIGHT_BREAKAWAY_PWM         50", source)
+        self.assertIn("LAB_GIMBAL_LINE_SPEED_FLOOR_MMPS    90", source)
+        self.assertIn("uint8_t gimbal_corner_present", source)
+        self.assertIn("uint8_t stable_gimbal_center_line", source)
+        self.assertIn("activeCount >= 5U", source)
+        self.assertIn("LAB_GIMBAL_CORNER_DETECT_CONFIRM 3U", source)
         self.assertIn("g_gimbalStartupSeedMmps", source)
-        self.assertIn("gimbal_service_breakaway", source)
-        self.assertIn("gimbal_apply_breakaway_common_gate", source)
+        self.assertIn(
+            "g_leftPwm = calculate_pi_pwm(&g_leftPi, g_leftTarget, leftSpeed);",
+            source,
+        )
+        self.assertIn(
+            "g_rightPwm = calculate_pi_pwm(&g_rightPi, g_rightTarget, rightSpeed);",
+            source,
+        )
         for retired in (
             "g_gimbalRecovery",
             "g_gimbalHeadingTurn",
             "g_gimbalHeadingTarget",
             "g_gimbalStartupSync",
+            "g_gimbalLaunchStable",
+            "gimbal_update_sync_turn",
+            "g_gimbalSyncTurnMmps",
+            "LAB_GIMBAL_SYNC_TURN_LIMIT_MMPS",
+            "BREAKAWAY",
+            "gimbal_service_breakaway",
+            "gimbal_apply_breakaway_common_gate",
             "RECOVERY SEEK",
             "RECOVERY SETTLE",
             "#if 0",
         ):
             self.assertNotIn(retired, source)
 
-    def test_guard9_capture_align_does_not_stack_startup_or_imu_turn(
+    def test_guard10_capture_align_does_not_stack_startup_or_imu_turn(
         self,
     ) -> None:
         source = (
             Path(__file__).resolve().parent.parent / "LAB" / "lab_ctrl.c"
         ).read_text(encoding="utf-8")
-        selector_start = source.index("uint8_t gimbalEnvelopeActive")
+        selector_start = source.index("uint8_t gimbalLineControl")
         selector_end = source.index(
             "int16_t gimbalLineLimit", selector_start
         )
         selector = source[selector_start:selector_end]
         self.assertIn("gimbalEnvelopeActive", selector)
+        self.assertIn("gimbalLineControl", selector)
         self.assertIn("SQUARE_STATE_CAPTURE_ALIGN", selector)
 
         output_start = source.index("outputTurn = g_lineTurnMmps;")
@@ -820,7 +865,7 @@ class CliTests(unittest.TestCase):
         )
 
     def test_gimbal_square_requires_guard_firmware_before_motion(self) -> None:
-        self.assertEqual(gui.GIMBAL_GUARD_VERSION, 10)
+        self.assertEqual(gui.GIMBAL_GUARD_VERSION, 19)
         with self.assertRaisesRegex(RuntimeError, "guard firmware"):
             cli.require_gimbal_square_guard(
                 {"PROFILE": gui.PROFILE_IDS["GIMBAL"], "FLASHVER": 3},
@@ -1101,7 +1146,9 @@ class CliTests(unittest.TestCase):
         search_block = source[search_start:search_end]
         self.assertIn("(turnSearchTargetReached != 0U)", search_block)
         self.assertIn("(lineCaptureReady == 0U)", search_block)
-        self.assertIn('SERIAL_SendString("TURN SEARCH,")', search_block)
+        self.assertIn("g_squareState = SQUARE_STATE_EXIT", search_block)
+        self.assertIn('SERIAL_SendString("TURN ANGLE,")', search_block)
+        self.assertIn("MOTOR_Stop()", search_block)
 
         capture_send = source.index('SERIAL_SendString("TURN CAPTURE,")')
         capture_gate = source[
@@ -1109,7 +1156,10 @@ class CliTests(unittest.TestCase):
         ]
         self.assertIn("(lineCaptureReady != 0U)", capture_gate)
         self.assertIn("(turnLineValid != 0U)", capture_gate)
-        self.assertIn("(outgoingLineCandidate != 0U)", capture_gate)
+        # V4-compatible GIMBAL capture is driven by a valid center-line
+        # return after the cleared/half-travel gate; the ordered outer/gap
+        # evidence remains telemetry only and must not block a real line.
+        self.assertIn("(center_line_seen(g_lineMask) != 0U)", capture_gate)
 
     def test_guard7_real_valid_line_was_not_physical_line_loss(
         self,
@@ -1270,13 +1320,17 @@ class CliTests(unittest.TestCase):
         self.assertEqual(actual["GSTART"], -17)
         commit.assert_called_once_with(
             tuner,
-            {"SYNC": 500, "BIAS": 80, "GSTART": -17},
+            {
+                **cli.GIMBAL_LOAD_WHEEL_PARAMETERS,
+                "SYNC": 500, "BIAS": 80, "GSTART": -17,
+            },
             "auto preparation",
         )
 
     def test_prepare_gimbal_auto_skips_matching_flash_write(self) -> None:
         current = {
             **gui.FIRMWARE_DEFAULT_PARAMETERS,
+            **cli.GIMBAL_LOAD_WHEEL_PARAMETERS,
             "SYNC": 500,
             "BIAS": 80,
             "GSTART": 17,
@@ -1316,7 +1370,10 @@ class CliTests(unittest.TestCase):
         self.assertEqual(actual["GSTART"], 10)
         commit.assert_called_once_with(
             tuner,
-            {"SYNC": 500, "BIAS": 80, "GSTART": 10},
+            {
+                **cli.GIMBAL_LOAD_WHEEL_PARAMETERS,
+                "SYNC": 500, "BIAS": 80, "GSTART": 10,
+            },
             "auto preparation",
         )
 
@@ -1366,6 +1423,7 @@ class CliTests(unittest.TestCase):
         }
         bootstrap = {
             **original,
+            **cli.GIMBAL_LOAD_WHEEL_PARAMETERS,
             **cli.GIMBAL_BOOTSTRAP_PARAMETERS,
         }
         tuner = mock.Mock()
@@ -1386,13 +1444,17 @@ class CliTests(unittest.TestCase):
         self.assertEqual(
             tuner._send_set.call_args_list,
             [
+                mock.call("LMIN", 90),
+                mock.call("RMIN", 85),
+                mock.call("LFF", 540),
+                mock.call("RFF", 520),
                 mock.call("TURNSLOW", 80),
-                mock.call("LINEKP", 3000),
-                mock.call("LINEKD", 800),
-                mock.call("TURNFAST", 150),
-                mock.call("TURNMARGIN", 300),
-                mock.call("TURNEXIT", 100),
-                mock.call("TURNSLOW", 100),
+                mock.call("LINEKP", 8250),
+                mock.call("LINEKD", 2250),
+                mock.call("TURNFAST", 185),
+                mock.call("TURNMARGIN", 180),
+                mock.call("TURNEXIT", 140),
+                mock.call("TURNSLOW", 140),
             ],
         )
         tuner.start_gimbal_auto.assert_called_once_with(

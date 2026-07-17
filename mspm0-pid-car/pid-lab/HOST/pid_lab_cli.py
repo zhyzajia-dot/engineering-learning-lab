@@ -38,14 +38,23 @@ from pid_autotune_gui import (
 )
 
 GIMBAL_STAGE1_PARAMETERS = {"SYNC": 500, "BIAS": 80, "GSTART": 10}
+GIMBAL_LOAD_WHEEL_PARAMETERS = {
+    # Keep the proven V4 wheel PI gains, but raise the direct torque terms for
+    # the heavier chassis.  At the first 40 mm/s target these values produce
+    # about 125 PWM on both wheels through the normal PI+FF equation.
+    "LMIN": 90,
+    "RMIN": 85,
+    "LFF": 540,
+    "RFF": 520,
+}
 GIMBAL_GSTART_LIMIT_MMPS = 35
 GIMBAL_BOOTSTRAP_PARAMETERS = {
     "LINEKP": GIMBAL_BOOTSTRAP_LINE_PAIR[0],
     "LINEKD": GIMBAL_BOOTSTRAP_LINE_PAIR[1],
-    "TURNFAST": 150,
-    "TURNSLOW": 100,
-    "TURNMARGIN": 300,
-    "TURNEXIT": 100,
+    "TURNFAST": 185,
+    "TURNSLOW": 140,
+    "TURNMARGIN": 180,
+    "TURNEXIT": 140,
 }
 GIMBAL_AUTO_ROLLBACK_PARAMETERS = GIMBAL_RUNTIME_PARAMETERS
 
@@ -447,6 +456,7 @@ def prepare_gimbal_auto_profile(tuner: AutoTuner) -> dict[str, int]:
     ):
         raise RuntimeError(f"Invalid learned GSTART readback: {learned_gstart}")
     expected = {
+        **GIMBAL_LOAD_WHEEL_PARAMETERS,
         "SYNC": GIMBAL_STAGE1_PARAMETERS["SYNC"],
         "BIAS": GIMBAL_STAGE1_PARAMETERS["BIAS"],
         "GSTART": (
@@ -481,7 +491,7 @@ def run_gimbal_auto(
     statuses: queue.Queue[str],
     args: argparse.Namespace,
 ) -> bool:
-    """Run Guard10 line/turn learning in one continuous square session."""
+    """Run Guard19 line/turn learning in one continuous square session."""
     original: dict[str, int] | None = None
     worker_started = False
     try:
@@ -503,9 +513,10 @@ def run_gimbal_auto(
                 f"Invalid learned GSTART readback: {learned_gstart}"
             )
 
-        # All preparation is RAM-only.  Guard10 performs the sole Flash SAVE
+        # All preparation is RAM-only.  Guard19 performs the sole Flash SAVE
         # only after four valid centered corners and final straight validation.
         stage_parameters = {
+            **GIMBAL_LOAD_WHEEL_PARAMETERS,
             "SYNC": GIMBAL_STAGE1_PARAMETERS["SYNC"],
             "BIAS": GIMBAL_STAGE1_PARAMETERS["BIAS"],
             "GSTART": (
@@ -550,13 +561,15 @@ def run_gimbal_auto(
             )
         print(
             "ACTIVE CALIBRATION: "
+            f"LMIN={bootstrap['LMIN']} RMIN={bootstrap['RMIN']} "
+            f"LFF={bootstrap['LFF']} RFF={bootstrap['RFF']} "
             f"LINEKP={bootstrap['LINEKP']} LINEKD={bootstrap['LINEKD']} "
             f"TURNFAST={bootstrap['TURNFAST']} "
             f"TURNSLOW={bootstrap['TURNSLOW']} "
             f"GUARDVER={bootstrap['GUARDVER']}"
         )
         print(
-            "GIMBAL AUTO Guard10: no fixed qualification lap. The first "
+            "GIMBAL AUTO Guard19: no fixed qualification lap. The first "
             "straight edge is scored immediately; bounded LINEKP/LINEKD "
             "coordinate trials switch one parameter at a time only on stable "
             "centered windows. Clearly worse trials roll back in RAM. "

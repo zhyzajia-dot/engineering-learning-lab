@@ -1,10 +1,89 @@
+# Current handoff (2026-07-17, Guard19)
+
+The current source and default firmware are Guard19. This is the final structural candidate for the heavy-gimbal profile; it has passed the host regression suite and warning-free MSPM0 build, but Guard19 itself still needs the next physical run after flashing.
+
+The design deliberately returns to the proven V4 ownership model instead of stacking independent recovery controllers:
+
+- Straight-line steering has one owner: grayscale error → PD → left/right speed targets → wheel PI/PWM. The heavy-gimbal automatic run starts at the historical champion `LINEKP=8250`, `LINEKD=2250` (the old `6750/2000` start could not reach that champion with local ±100 trials). D is active outside the small center deadband; candidates that worsen the same straight-edge score are rolled back.
+- Turning follows V4 geometry: 50 ms approach, fast in-place turn, slow phase near the learned distance/angle, then immediate capture when the old line has cleared, travel is at least `3/4×TURNDIST`, and two consecutive center/adjacent-center observations have `error=0..6`. This accepts the real `mask=48,error=4/6` pattern seen just before the previous failure while rejecting the historical early `mask=12,error=-6` edge. Capture brakes, verifies the line, aligns, and only then counts a corner.
+- The loaded profile now starts with V4 turn parameters `TURNFAST=185`, `TURNSLOW=140`, `TURNMARGIN=180`, `TURNEXIT=140`, `TURNDIST=98`; wheel response remains separate (`LMIN=90/RMIN=85`, `LFF=540/RFF=520`) so LIGHT is not changed.
+- IMU yaw is relative and diagnostic/safety evidence. The same mounting location as V4 does not guarantee the same Euler yaw after the high gimbal changes roll/pitch vibration and chassis motion. Logs measured a physical 90° rotation as about 68.7°, and a Guard16 turn peaked near 51° while encoder travel exceeded 290 mm. Therefore yaw cannot be the only completion authority; encoder geometry and real line return are primary.
+
+The last Guard18 run is the reason for Guard19: the vehicle crossed `mask=48` at travel `75..91 mm`, but Guard18 waited until `98 mm`, then saw `mask=96/64` and stopped with `LINE NOT CAPTURED`. Guard19 moves the capture decision back into the V4-style sweep, before the line has passed under the array.
+
+Current HEX: 109,209 bytes, SHA-256 `B8C93A81C862278F6E8EF786E99F9AC4CEF27DA6BB85B79D8B2818CC0A4AADAC` (run `Get-FileHash -Algorithm SHA256 .\Debug\pid_lab_mspm0.hex` before flashing).
+
+## Guard19 换电脑交接与烧录注意事项
+
+本节优先于后面的历史 Guard9～Guard18 复盘。历史内容保留是为了追溯故障，不代表当前应烧录的版本。
+
+### 在新电脑上准备
+
+所有工程和工具尽量放在 D 盘：
+
+```powershell
+# 工程
+D:\engineering-learning-lab\mspm0-pid-car\pid-lab
+
+# 当前机器已准备好的便携 Git
+D:\Tools\MinGit\cmd\git.exe
+
+# 当前机器的 TI 工具
+D:\TI\mspm0_sdk_2_10_00_04
+D:\TI\SysConfig\sysconfig_cli.bat
+D:\TI\tiarmclang\bin\tiarmclang.exe
+```
+
+如果 VS Code 提示没有 Git，在设置中把 `git.path` 指向 `D:\Tools\MinGit\cmd\git.exe`；也可以直接在 PowerShell 中使用上面的完整路径。换电脑后先安装 MSPM0 SDK、SysConfig、TI ARM Clang，再运行构建脚本，不要把旧电脑的 `tmp/` 目录当作编译结果复制过去。
+
+### 建议的恢复顺序
+
+```powershell
+Set-Location D:\engineering-learning-lab\mspm0-pid-car\pid-lab
+$env:PYTHONPATH='D:\engineering-learning-lab\mspm0-pid-car\pydeps'
+$py='C:\Users\<用户名>\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe'
+
+& $py -m unittest discover -s .\HOST -p 'test_*.py'
+powershell -ExecutionPolicy Bypass -File .\build_mspm0_hex.ps1
+Get-FileHash -Algorithm SHA256 .\Debug\pid_lab_mspm0.hex
+```
+
+把 `$py` 换成新电脑实际的 Python 路径；若已安装 Python 和 `pyserial`，可直接使用 `python`。烧录后连接串口，先只读确认：
+
+```powershell
+& $py .\HOST\pid_lab_cli.py diagnose --port COM3
+& $py .\HOST\pid_lab_cli.py params --port COM3
+```
+
+必须看到 `GUARDVER=19`、`FLASHVER=3`、`PROFILE=0/1` 且 `STATUS ... IDLE ... SAFE`。重云台运行前由 `gimbal-auto` 自动选择 `PROFILE GIMBAL`；不要把 LIGHT 参数保存覆盖到 GIMBAL，也不要在开放场地测试。
+
+### Guard19 唯一实车入口
+
+先把车放在逆时针封闭方形赛道起点，确认两轮和云台供电正常、车轮前方无人，再运行：
+
+```powershell
+& $py .\HOST\pid_lab_cli.py gimbal-auto --port COM3 --speed 120 --track-safe
+```
+
+该流程会从 `8250/2250` 开始直线评分，D 优先做有界试探；明显变差立即回滚。转弯完成必须出现 `TURN CAPTURE`/`TURN CENTER`，失败时主机会先 `STOP` 并恢复本次任务前的 GIMBAL RAM 参数，不会把失败候选 `SAVE` 到 Flash。第一次 Guard19 实车只跑 120 mm/s，确认首弯和最终直边后再考虑更高速度。
+
+Build tools used on this computer are installed under `D:\TI`: MSPM0 SDK 2.10.00.04, SysConfig 1.28.0.4712, and TI ARM Clang 5.1.1.LTS. The build script now searches these D: locations and also accepts `MSPM0_SDK`, `SYSCONFIG_CLI`, and `TI_ARMCLANG` environment variables.
+
+Current HEX: 108,917 bytes, SHA-256 `11E78C61AC6862FA89C3F94D93AFE85DAD22488410155CC4C8949A09A1B11CEF` (run `Get-FileHash -Algorithm SHA256 .\Debug\pid_lab_mspm0.hex` before flashing).
+
 # MSPM0 循迹小车：V4 基线与重云台适配交接
 
-> 更新时间：2026-07-17。新对话先完整阅读本文件，再查看源代码和保留日志。当前工作的唯一控制基线是 V4；不要恢复已经否决的中间循迹实验，也不要在没有实车证据时同时改轮速环、循迹环和转弯状态机。
+> 更新时间：2026-07-17。当前候选恢复 V4 的两层闭环：灰度 PD 只分配目标速度，编码器轮速 PI+前馈直接决定 PWM。GIMBAL 运行前使用重载轮速参数 `LMIN=90 / RMIN=85 / LFF=540 / RFF=520`，不再运行任何启动托举或启动同步状态机。历史 Guard9/Guard8 记录仅用于复盘，不代表当前 HEX。
 
-## 0. 2026-07-17 最新交接：Guard9 已构建，等待首次受控实车验证
+## 0. 2026-07-17 最新交接：Guard11 已构建，等待首次受控实车验证
 
 本节是最新状态，优先级高于后文仍保留的历史过程说明。
+
+- 15:35 实车失败的直接证据：启动同步已把目标推到左/右 `150/90 mm/s`，但实际左轮仍只有 `13～58 mm/s`、右轮 `47～104 mm/s`；旧稳定门始终未释放，灰度 PD 无法接管，所以车辆向左脱线。这不是自动调参没有算出结果，而是控制所有权设计错误。
+- 当前 Guard11 已删除 GIMBAL 直线中的启动同步转向、稳定确认门、共同启动门、破静摩擦 PWM 覆盖和专用堵转状态。灰度 PD 从第一帧分配左右速度目标，编码器轮速 PI 使用 GIMBAL 独立的 `MIN/FF/KP/KI` 生成 PWM，与 V4 数据流一致。
+- 16:05 实车显示起点正确、灰度 `mask=24`，但沿用轻载 `LMIN=32/RMIN=26` 时左轮在 `340～1200 ms` 几乎没有速度。当前候选不再增加托举状态机，而是在自动流程开始时直接装入重载 `LMIN=90/RMIN=85/LFF=540/RFF=520`；在首个 `40 mm/s` 目标处，两轮正常 PI 公式均约输出 `125 PWM`。
+- 上位机 GIMBAL 自动调参从 `LINEKP=3500 / LINEKD=1000` 起步，局部步长缩小到 `250 / 200`；明显变差的候选累计够最少样本后立即回滚，不再等待车辆重新居中。
+- 当前 HEX 已通过 TI ARM Clang 的 `-Wall -Wextra -Werror` 构建和全部 62 项测试；尚未进行本版实车验证，必须重新烧录后再运行。
 
 - 2026-07-17 最新实车日志确认首条直线在 `mask=0` 后仍等速前冲，旧版的 `100 mm/s` 首边限速和 `25°` 提前航向停车已撤回/放宽。当前候选恢复为 `120 mm/s` 首边速度、`500 ms` 起步斜坡、保留最后转向追回丢线，且 PID 差速上限回到可调范围；待烧录 `Debug/pid_lab_mspm0.hex` 与不可变归档 `Debug/pid_lab_mspm0_guard9_recovery_pid_20260717.hex` 均为 `109,196 B`，SHA-256 均为 `6BC9485047A9B100AE7E3450632F1C8508180D3CE5906B3C9581E1CBBE51F4D1`。旧版归档仅保留作对比，不要再烧录。
 - Guard9 不改 LIGHT、轮速 PI、PWM 和基本循迹 PD，只收紧 GIMBAL 转弯捕获并收窄重载直线差速：直线差速由原先最大 `±75` 改为 `±45 mm/s`，每周期变化限制为 `10 mm/s`；转弯仍使用有符号逆时针 yaw、IMU 失效/野点立即停车、强制 `RIGHT_DEPART → 连续 gap → LEFT_ENTRY`、左侧 0～2 路且 `error <= -6`、`75°～110°` 和 `0.75～1.8 × TURNDIST` 窗口，刹停/ALIGN 无线继续 fail-stop。

@@ -25,14 +25,20 @@ function Find-FirstExistingPath {
 
 $sdkSearch = @(
     $env:COM_TI_MSPM0_SDK_INSTALL_DIR,
+    $env:MSPM0_SDK,
+    'D:\TI\mspm0-sdk',
     'C:\ti\mspm0_sdk_2_10_00_04',
     'F:\MSPM0SDK\mspm0_sdk_2_10_00_04'
 )
 $sysConfigSearch = @(
+    $env:SYSCONFIG_CLI,
+    'D:\TI\sysconfig_1.28.0_4712\sysconfig_cli.bat',
     'C:\ti\sysconfig_1.26.2\sysconfig_cli.bat',
     'F:\TICCS\ccs\utils\sysconfig_1.27.0\sysconfig_cli.bat'
 )
 $compilerSearch = @(
+    $env:TI_ARMCLANG,
+    'D:\TI\ti_cgt_armllvm_5.1.1.LTS\ti-cgt-armllvm_5.1.1.LTS\bin\tiarmclang.exe',
     'C:\ti\ti_cgt_arm_llvm_4.0.2.LTS\bin\tiarmclang.exe',
     'F:\TICCS\ccs\tools\compiler\ti-cgt-armllvm_4.0.4.LTS\bin\tiarmclang.exe'
 )
