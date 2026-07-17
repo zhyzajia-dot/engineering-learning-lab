@@ -29,3 +29,9 @@ HOST/logs/guard8_live_*.stdout.log
 HOST/logs/guard8_live_*.stderr.log
 HOST/logs/start_process_*.stdout.log
 HOST/logs/start_process_*.stderr.log
+
+# Older local qualification attempts not included in the Guard19 handoff.
+HOST/logs/gimbal_auto_guard8_*/
+HOST/logs/gimbal_auto_guard14_*/
+HOST/logs/gimbal_auto_guard15_*/
+HOST/logs/square_cli_20260717_*/
