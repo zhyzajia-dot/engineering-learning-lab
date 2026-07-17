@@ -1,3 +1,19 @@
 {
-  "git.path": "D:\\Tools\\MinGit\\cmd\\git.exe"
+  "git.path": "D:\\Tools\\MinGit\\cmd\\git.exe",
+  "files.exclude": {
+    "**/.ccsproject": true,
+    "**/.clangd": true,
+    "**/.cproject": true,
+    "**/.project": true,
+    "**/.settings": true,
+    "**/.theia": true,
+    "**/.vscode": true,
+    "**/Debug": true,
+    "**/targetConfigs": true,
+    "**/__pycache__": true
+  },
+  "search.exclude": {
+    "**/Debug": true,
+    "**/HOST/logs": true
+  }
 }
