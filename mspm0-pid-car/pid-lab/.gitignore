@@ -25,6 +25,7 @@ Debug/*
 # Local console wrappers and failed process-launch probes are transient.
 # Evidence-bearing vehicle sessions are kept in their timestamped directories.
 HOST/logs/gimbal_auto_live_*/
+HOST/logs/gimbal_auto_live_*
 HOST/logs/guard8_live_*.stdout.log
 HOST/logs/guard8_live_*.stderr.log
 HOST/logs/start_process_*.stdout.log
