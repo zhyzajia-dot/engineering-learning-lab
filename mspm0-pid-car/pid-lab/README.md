@@ -1,17 +1,17 @@
-# Current handoff (2026-07-18, Guard22)
+# Current handoff (2026-07-18, Guard23)
 
-The current source and default firmware are Guard22. Guard21's real run proved that the earlier taper reduced coast from `29 mm` to about `8 mm`, but the hard stop still lost the line. Guard22 adds a short, low `45 PWM/40 ms` counter-torque pulse opposite to the CCW turn before holding the bridge stopped; the slower GIMBAL pair (`TURNFAST=165`, `TURNSLOW=110`) and `1/2×TURNDIST` taper remain. It still needs the next physical run after flashing.
+The current source and default firmware are Guard23. Guard22's real run proved that the counter-torque stopped the chassis near `80 mm`, but the capture-brake gate rejected the still-valid `mask=32` line on the 6th sensor and waited until timeout. Guard23 lets any valid post-capture edge, including `mask=32/96` (6/7th sensors), enter the grayscale PID alignment; it no longer requires the line to be centered before moving. The slower GIMBAL pair (`TURNFAST=165`, `TURNSLOW=110`), `1/2×TURNDIST` taper, and short counter-torque remain.
 
 The design deliberately returns to the proven V4 ownership model instead of stacking independent recovery controllers:
 
 - Straight-line steering has one owner: grayscale error → PD → left/right speed targets → wheel PI/PWM. The heavy-gimbal automatic run starts at the historical champion `LINEKP=8250`, `LINEKD=2250` (the old `6750/2000` start could not reach that champion with local ±100 trials). D is active outside the small center deadband; candidates that worsen the same straight-edge score are rolled back.
-- Turning follows V4 geometry: 50 ms approach, slower heavy-gimbal turn, geometry-based pre-brake from `1/2×TURNDIST`, about `70 PWM` at the capture window, then a short `45 PWM/40 ms` counter-torque pulse; capture still requires the old line to clear, travel at least `3/4×TURNDIST`, and two consecutive center/adjacent-center observations with `error=0..6`.
+- Turning follows V4 geometry: 50 ms approach, slower heavy-gimbal turn, geometry-based pre-brake from `1/2×TURNDIST`, about `70 PWM` at the capture window, then a short `45 PWM/40 ms` counter-torque pulse. Once capture is confirmed, any valid black line—including sensor 6/7 edge masks—is handed to grayscale PID alignment; it does not wait for an initially centered line.
 - The loaded profile now starts with V4 turn parameters `TURNFAST=185`, `TURNSLOW=140`, `TURNMARGIN=180`, `TURNEXIT=140`, `TURNDIST=98`; wheel response remains separate (`LMIN=90/RMIN=85`, `LFF=540/RFF=520`) so LIGHT is not changed.
 - IMU yaw is relative and diagnostic/safety evidence. The same mounting location as V4 does not guarantee the same Euler yaw after the high gimbal changes roll/pitch vibration and chassis motion. Logs measured a physical 90° rotation as about 68.7°, and a Guard16 turn peaked near 51° while encoder travel exceeded 290 mm. Therefore yaw cannot be the only completion authority; encoder geometry and real line return are primary.
 
-The Guard18 run is the reason for Guard19: the vehicle crossed `mask=48` at travel `75..91 mm`, but Guard18 waited until `98 mm`, then saw `mask=96/64` and stopped with `LINE NOT CAPTURED`. Guard19 moved capture back into the V4-style sweep. Guard20 and Guard21 reduced the turn speed and coast, but Guard21 still lost the line during the final stop; the counter-torque pulse is the sole Guard22 change.
+The Guard18 run is the reason for Guard19: the vehicle crossed `mask=48` at travel `75..91 mm`, but Guard18 waited until `98 mm`, then saw `mask=96/64` and stopped with `LINE NOT CAPTURED`. Guard19 moved capture back into the V4-style sweep. Guard20/21 reduced turn speed and coast; Guard22 proved the vehicle could stop near the line but then rejected `mask=32`; accepting that valid edge for PID alignment is the sole Guard23 change.
 
-Current HEX: 110,056 bytes, SHA-256 `23E0605E503CD56EFFA52D9A577FFE0A9520EEBC52C9A966AF824D7AECF7D408` (run `Get-FileHash -Algorithm SHA256 .\Debug\pid_lab_mspm0.hex` before flashing).
+Current HEX: 110,056 bytes, SHA-256 `B298FCFDFE7FAB17DA1AD70176C6C61F4E08393A73ABF412CB41D0CF040E793E` (run `Get-FileHash -Algorithm SHA256 .\Debug\pid_lab_mspm0.hex` before flashing).
 
 ## Guard19 换电脑交接与烧录注意事项
 

@@ -141,6 +141,7 @@
 #define LAB_GIMBAL_TURN_LEFT_ENTRY_MAX_ERROR   -6
 #define LAB_GIMBAL_TURN_RIGHT_DEPART_MASK     0x60U
 #define LAB_GIMBAL_TURN_LEFT_ENTRY_MASK       0x07U
+#define LAB_GIMBAL_CAPTURE_VALID_EDGE_MASK    0x60U
 #define LAB_GIMBAL_TURN_GAP_CONFIRM              2U
 #define LAB_GIMBAL_TURN_TRAVEL_MIN_NUM            3
 #define LAB_GIMBAL_TURN_TRAVEL_MIN_DEN            4
@@ -171,7 +172,7 @@
 #define LAB_GIMBAL_STARTUP_HEADING_STOP_X10 32767
 #define LAB_GIMBAL_LINE_HEADING_STOP_X10   32767
 #define LAB_GIMBAL_LINE_HEADING_CONFIRM      3U
-#define LAB_GIMBAL_GUARD_VERSION              22
+#define LAB_GIMBAL_GUARD_VERSION              23
 /* 灰度有效位掩码：低 7 位为有效检测位 */
 #define LAB_LINE_SENSOR_VALID_MASK   0x7FU
 
@@ -3368,11 +3369,14 @@ static uint8_t square_service_turn(uint32_t nowMs)
 
             if (g_gimbalCaptureSettleCount >=
                 LAB_GIMBAL_CAPTURE_SETTLE_CONFIRM) {
-                /* 刹停会改变传感器相对线的位置。只有捕获线仍由左侧或中心
-                 * 探头真实看到时才允许向前对中；无线时继续保持停车。 */
+                /* 刹停会改变传感器相对线的位置。捕获已经由前一阶段的
+                 * mask=48 完成；此处只要仍有有效黑线（包括用户观察到的
+                 * 6/7 号灯 mask=32/96）就交给灰度 PID 对中，不要求一开始
+                 * 就落在中心探头。 */
                 if ((turnLineValid == 0U) ||
                     (((g_lineMask &
-                       LAB_GIMBAL_TURN_LEFT_ENTRY_MASK) == 0U) &&
+                       (LAB_GIMBAL_TURN_LEFT_ENTRY_MASK |
+                        LAB_GIMBAL_CAPTURE_VALID_EDGE_MASK)) == 0U) &&
                      (center_line_seen(g_lineMask) == 0U))) {
                     if (elapsed >=
                         LAB_GIMBAL_CAPTURE_BRAKE_MAX_MS) {
