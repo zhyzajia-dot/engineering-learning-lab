@@ -1,17 +1,17 @@
-# Current handoff (2026-07-18, Guard20)
+# Current handoff (2026-07-18, Guard21)
 
-The current source and default firmware are Guard20. Guard19's real run proved the line-capture timing was correct (`TURN CAPTURE,1,420,76,48,6`) and the straight controller reached score `0.256` after accepting `LINEKD=2150`, but the heavy chassis coasted from actual wheel speeds `245/174 mm/s` to travel `112 mm` during a hard stop. Guard20 adds a geometry-based pre-brake: from `2/3×TURNDIST` it continuously limits turn PWM, reaching about `100 PWM` at the capture window. It has passed the host regression suite and warning-free MSPM0 build; Guard20 itself still needs the next physical run after flashing.
+The current source and default firmware are Guard21. Guard20's real run proved that its capture timing was correct but still too fast: at `TURN CAPTURE,1,386,76,48,6`, the heavy chassis coasted from actual wheel speeds `232/173 mm/s` to travel `105 mm` and lost the line. Guard21 starts the geometry taper at `1/2×TURNDIST`, limits the capture-window torque to about `70 PWM`, and loads a slower GIMBAL turn pair (`TURNFAST=165`, `TURNSLOW=110`) while leaving LIGHT/V4 straight control unchanged. It still needs the next physical run after flashing.
 
 The design deliberately returns to the proven V4 ownership model instead of stacking independent recovery controllers:
 
 - Straight-line steering has one owner: grayscale error → PD → left/right speed targets → wheel PI/PWM. The heavy-gimbal automatic run starts at the historical champion `LINEKP=8250`, `LINEKD=2250` (the old `6750/2000` start could not reach that champion with local ±100 trials). D is active outside the small center deadband; candidates that worsen the same straight-edge score are rolled back.
-- Turning follows V4 geometry: 50 ms approach, fast in-place turn, geometry-based pre-brake from `2/3×TURNDIST`, then immediate capture when the old line has cleared, travel is at least `3/4×TURNDIST`, and two consecutive center/adjacent-center observations have `error=0..6`. This accepts the real `mask=48,error=4/6` pattern seen just before the previous failure while rejecting the historical early `mask=12,error=-6` edge. Capture brakes, verifies the line, aligns, and only then counts a corner.
+- Turning follows V4 geometry: 50 ms approach, slower heavy-gimbal turn, geometry-based pre-brake from `1/2×TURNDIST`, and about `70 PWM` at the capture window; capture still requires the old line to clear, travel at least `3/4×TURNDIST`, and two consecutive center/adjacent-center observations with `error=0..6`. This keeps the useful `mask=48,error=4/6` pattern while reducing the coast that carried Guard20 from `76` to `105 mm`.
 - The loaded profile now starts with V4 turn parameters `TURNFAST=185`, `TURNSLOW=140`, `TURNMARGIN=180`, `TURNEXIT=140`, `TURNDIST=98`; wheel response remains separate (`LMIN=90/RMIN=85`, `LFF=540/RFF=520`) so LIGHT is not changed.
 - IMU yaw is relative and diagnostic/safety evidence. The same mounting location as V4 does not guarantee the same Euler yaw after the high gimbal changes roll/pitch vibration and chassis motion. Logs measured a physical 90° rotation as about 68.7°, and a Guard16 turn peaked near 51° while encoder travel exceeded 290 mm. Therefore yaw cannot be the only completion authority; encoder geometry and real line return are primary.
 
-The Guard18 run is the reason for Guard19: the vehicle crossed `mask=48` at travel `75..91 mm`, but Guard18 waited until `98 mm`, then saw `mask=96/64` and stopped with `LINE NOT CAPTURED`. Guard19 moved capture back into the V4-style sweep. The Guard19 run then showed the remaining heavy-gimbal inertia, which is the sole Guard20 change.
+The Guard18 run is the reason for Guard19: the vehicle crossed `mask=48` at travel `75..91 mm`, but Guard18 waited until `98 mm`, then saw `mask=96/64` and stopped with `LINE NOT CAPTURED`. Guard19 moved capture back into the V4-style sweep. Guard20 reduced PWM only near the capture point; its physical run still coasted to `105 mm`, which is the sole Guard21 change.
 
-Current HEX: 109,995 bytes, SHA-256 `045A8F8D23FE66D0C7393E70D3C9BFC7BA1E410B88C88BD66B191B49F6A4934C` (run `Get-FileHash -Algorithm SHA256 .\Debug\pid_lab_mspm0.hex` before flashing).
+Current HEX: 109,950 bytes, SHA-256 `534C8BC8EDC2FF0A2D408D2A8F0DEF6632BEEACCAABBB5D3D615AF24417331DA` (run `Get-FileHash -Algorithm SHA256 .\Debug\pid_lab_mspm0.hex` before flashing).
 
 ## Guard19 换电脑交接与烧录注意事项
 

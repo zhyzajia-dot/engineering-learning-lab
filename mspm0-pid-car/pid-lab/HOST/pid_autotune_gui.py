@@ -122,10 +122,10 @@ FIRMWARE_DEFAULT_PARAMETERS = {
 
 PROFILE_IDS = {"LIGHT": 0, "GIMBAL": 1}
 
-GIMBAL_GUARD_VERSION = 20
+GIMBAL_GUARD_VERSION = 21
 GIMBAL_SQUARE_TARGET_DELTA_GUARD_MMPS = 160
 GIMBAL_SQUARE_TARGET_DELTA_CONFIRM = 3
-# Guard20 leaves gray-line recovery to firmware. The host keeps only a broad
+# Guard21 leaves gray-line recovery to firmware. The host keeps only a broad
 # 60-degree communication backstop so a normal heavy-platform turn is not
 # stopped at the old 25-degree threshold.
 GIMBAL_HARD_YAW_GUARD_X10 = 600
@@ -1235,7 +1235,7 @@ class AutoTuner:
                 tune_speed_mmps, GIMBAL_AUTO_SQUARE_LAPS
             )
             self._status(
-                "GIMBAL Guard20 continuous autotune started: first straight "
+                "GIMBAL Guard21 continuous autotune started: first straight "
                 f"edge is the baseline; {len(trials)} bounded single-parameter "
                 "trials will run without repositioning"
             )
@@ -1271,7 +1271,7 @@ class AutoTuner:
                         GIMBAL_REQUIRED_CENTERED_CORNERS
                     ):
                         raise RuntimeError(
-                                "square ended before Guard20 autotune validation "
+                                "square ended before Guard21 autotune validation "
                             "completed"
                         )
                     break
@@ -1620,12 +1620,12 @@ class AutoTuner:
                             break
             else:
                 raise TimeoutError(
-                    "Guard20 continuous autotune did not finish within "
+                    "Guard21 continuous autotune did not finish within "
                     f"{GIMBAL_AUTO_TIMEOUT_SECONDS:g}s"
                 )
 
             if incumbent_score is None or final_validation_score is None:
-                raise RuntimeError("Guard20 final validation was not completed")
+                raise RuntimeError("Guard21 final validation was not completed")
             if len(successful_center_corners) < (
                 GIMBAL_REQUIRED_CENTERED_CORNERS
             ):
@@ -1780,7 +1780,7 @@ class AutoTuner:
                 encoding="utf-8",
             )
             self._status(
-                "GIMBAL COMPLETE: one-session Guard20 tune saved and verified; "
+                "GIMBAL COMPLETE: one-session Guard21 tune saved and verified; "
                 f"LINEKP={incumbent['LINEKP']} "
                 f"LINEKD={incumbent['LINEKD']}, centered corners="
                 f"{len(successful_center_corners)}, result={result_path}"

@@ -787,7 +787,7 @@ class CliTests(unittest.TestCase):
             Path(__file__).resolve().parent.parent / "LAB" / "lab_ctrl.c"
         ).read_text(encoding="utf-8")
         self.assertIn("LAB_LINE_SENSOR_VALID_MASK   0x7FU", source)
-        self.assertIn("LAB_GIMBAL_GUARD_VERSION              20", source)
+        self.assertIn("LAB_GIMBAL_GUARD_VERSION              21", source)
         self.assertIn("uint8_t gimbalLineControl", source)
         self.assertIn(
             "if ((gimbalLineControl != 0U) && (valid != 0U))", source
@@ -865,7 +865,7 @@ class CliTests(unittest.TestCase):
         )
 
     def test_gimbal_square_requires_guard_firmware_before_motion(self) -> None:
-        self.assertEqual(gui.GIMBAL_GUARD_VERSION, 20)
+        self.assertEqual(gui.GIMBAL_GUARD_VERSION, 21)
         with self.assertRaisesRegex(RuntimeError, "guard firmware"):
             cli.require_gimbal_square_guard(
                 {"PROFILE": gui.PROFILE_IDS["GIMBAL"], "FLASHVER": 3},
@@ -1451,10 +1451,10 @@ class CliTests(unittest.TestCase):
                 mock.call("TURNSLOW", 80),
                 mock.call("LINEKP", 8250),
                 mock.call("LINEKD", 2250),
-                mock.call("TURNFAST", 185),
+                mock.call("TURNFAST", 165),
                 mock.call("TURNMARGIN", 180),
                 mock.call("TURNEXIT", 140),
-                mock.call("TURNSLOW", 140),
+                mock.call("TURNSLOW", 110),
             ],
         )
         tuner.start_gimbal_auto.assert_called_once_with(
