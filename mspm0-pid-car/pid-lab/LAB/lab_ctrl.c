@@ -169,7 +169,7 @@
 #define LAB_GIMBAL_STARTUP_HEADING_STOP_X10 32767
 #define LAB_GIMBAL_LINE_HEADING_STOP_X10   32767
 #define LAB_GIMBAL_LINE_HEADING_CONFIRM      3U
-#define LAB_GIMBAL_GUARD_VERSION              19
+#define LAB_GIMBAL_GUARD_VERSION              20
 /* 灰度有效位掩码：低 7 位为有效检测位 */
 #define LAB_LINE_SENSOR_VALID_MASK   0x7FU
 
@@ -3012,6 +3012,29 @@ static int16_t gimbal_turn_pwm_for_yaw(int16_t yawX10)
         (((int32_t)(fast - slow) * (taperEnd - yawX10)) /
          (taperEnd - taperStart)));
 }
+
+static int16_t gimbal_turn_pwm_for_travel(int16_t pwm,
+                                           int16_t travelMm,
+                                           int16_t targetMm)
+{
+    int32_t slowStart = ((int32_t)targetMm * 2L) / 3L;
+    int32_t captureStart = ((int32_t)targetMm * 3L) / 4L;
+    int16_t slow = clamp_i16(g_turnSlowPwm, 80, 140);
+    int16_t captureLimit = (slow > 40) ? (int16_t)(slow - 40) : 80;
+    int16_t limit;
+
+    /* The heavy gimbal still carries roughly 35 mm after a hard stop at
+     * PWM~170.  V4 slows by geometry before the line returns; use the same
+     * geometry here because Euler yaw is under-reporting the chassis turn. */
+    if ((travelMm <= slowStart) || (targetMm <= 0)) return pwm;
+    if (travelMm >= captureStart) return
+        (pwm < captureLimit) ? pwm : captureLimit;
+    limit = (int16_t)(slow - (int16_t)(
+        ((int32_t)(slow - captureLimit) *
+         (travelMm - slowStart)) /
+        (captureStart - slowStart)));
+    return (pwm < limit) ? pwm : limit;
+}
 #endif
 
 static uint8_t square_service_turn(uint32_t nowMs)
@@ -3578,6 +3601,8 @@ static uint8_t square_service_turn(uint32_t nowMs)
         /* A continuous taper prevents the heavy platform from carrying the
          * fixed FAST/SLOW torque through the new line. */
         pwm = gimbal_turn_pwm_for_yaw(g_turnYawX10);
+        pwm = gimbal_turn_pwm_for_travel(
+            pwm, g_turnTravelMm, g_turnDistanceMm);
     }
 #endif
     g_leftPwm = (int16_t)(-pwm);
