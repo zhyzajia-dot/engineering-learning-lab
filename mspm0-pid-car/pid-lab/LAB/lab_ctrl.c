@@ -3965,6 +3965,38 @@ static void update_closed_loop(uint32_t nowMs)
                 (((int32_t)g_lineFilteredDelta * 2L) + errorDelta) / 3L);
             errorDelta = g_lineFilteredDelta;
 
+#if LAB_ENABLE_DUAL_PROFILE
+            /* Heavy-gimbal line control: when the error is still moving away
+             * from centre, spend a little of the forward speed budget on
+             * keeping both wheels in the sensor's capture corridor.  This is
+             * a continuous curvature schedule (not a stop/turn gate), so a
+             * large correction remains available while the chassis inertia is
+             * prevented from making the line jump from one edge to the other. */
+            if ((gimbalLineControl != 0U) && (baseTarget > 0)) {
+                int32_t risk = ((int32_t)absoluteError * 12L) +
+                               ((int32_t)abs_i16(errorDelta) * 8L);
+                int32_t speedScale;
+                int16_t adaptiveTarget;
+
+                if (((int32_t)g_lineError * (int32_t)errorDelta) > 0L) {
+                    risk += 80L;
+                }
+                if (risk > 450L) {
+                    risk = 450L;
+                }
+                speedScale = 1000L - risk;
+                adaptiveTarget = (int16_t)(((int32_t)baseTarget *
+                                            speedScale) / 1000L);
+                if (adaptiveTarget < LAB_GIMBAL_LINE_SPEED_FLOOR_MMPS) {
+                    adaptiveTarget = LAB_GIMBAL_LINE_SPEED_FLOOR_MMPS;
+                }
+                if (baseTarget > adaptiveTarget) {
+                    baseTarget = adaptiveTarget;
+                }
+            }
+#endif
+            highSpeed = (baseTarget >= LAB_LINE_HIGH_SPEED_MMPS) ? 1U : 0U;
+
             /* 中心死区不继续“追线”；中区正常，远区增强 P。 */
             if (absoluteError <= LAB_LINE_CENTER_ERROR) {
                 pGain = (pGain * 9L) / 10L;
@@ -4012,12 +4044,26 @@ static void update_closed_loop(uint32_t nowMs)
                 }
             }
 #endif
-            desiredTurn = clamp_i16(
-                ((pGain * effectiveError) +
-                 (dGain * errorDelta) -
-                 (((int32_t)(leftSpeed - rightSpeed) *
-                   LAB_GIMBAL_WHEEL_DAMP_X1000) / 1000L)) / 1000L,
-                (int16_t)-turnLimit, turnLimit);
+            {
+                int32_t rawTurn =
+                    ((pGain * effectiveError) +
+                     (dGain * errorDelta) -
+                     (((int32_t)(leftSpeed - rightSpeed) *
+                       LAB_GIMBAL_WHEEL_DAMP_X1000) / 1000L)) / 1000L;
+                int32_t absoluteTurn = (rawTurn >= 0L) ? rawTurn : -rawTurn;
+
+                /* Soft saturation preserves the sign and direction of the
+                 * PD command while compressing only the excessive tail.  A
+                 * hard clamp made the two wheel targets jump to their rails,
+                 * which is what caused the heavy platform to oscillate and
+                 * lose the line at a large error. */
+                if ((turnLimit > 0) && (absoluteTurn > turnLimit)) {
+                    rawTurn = (rawTurn * turnLimit) /
+                              (turnLimit + absoluteTurn);
+                }
+                desiredTurn = clamp_i16(rawTurn,
+                                        (int16_t)-turnLimit, turnLimit);
+            }
             /* 所有速度都必须平滑变化；反向修正自然经过零点。 */
             g_lineTurnMmps = clamp_i16(
                 desiredTurn,

@@ -31,7 +31,9 @@ The design deliberately returns to the proven V4 ownership model instead of stac
 
 The Guard18 run is the reason for Guard19: the vehicle crossed `mask=48` at travel `75..91 mm`, but Guard18 waited until `98 mm`, then saw `mask=96/64` and stopped with `LINE NOT CAPTURED`. Guard19 moved capture back into the V4-style sweep. Guard20/21 reduced turn speed and coast; Guard22/23 proved the capture and PID handoff; Guard24's second-corner `mask=13/7` detector miss is the sole Guard25 change.
 
-Current HEX: 110,056 bytes, SHA-256 `71001630646B79FAC3CB121B4545F37CFB042EE1AED8A3A0215323A5290C774F` (run `Get-FileHash -Algorithm SHA256 .\Debug\pid_lab_mspm0.hex` before flashing). This build adds wheel-speed damping to the gray PD loop, uses continuous P/D gain scheduling, and keeps the earlier no-false-stop and V4-like speed changes.
+Current HEX: 110,765 bytes, SHA-256 `AE8EEBAB79A09863F7D56CAB1D653797C3CB8843EAE2B629DD7978957BE46D44` (run `Get-FileHash -Algorithm SHA256 .\Debug\pid_lab_mspm0.hex` before flashing). This build adds measured wheel-speed damping, continuous P/D gain scheduling, curvature/derivative-based forward-speed scheduling, and smooth nonlinear steering compression for the heavy gimbal platform.
+
+The heavy-platform correction is deliberately continuous: when the line error and filtered error velocity point outward, a bounded portion of forward speed is exchanged for capture margin; it never enters a fixed stop or a one-sided turn mode. The PD command is then passed through a soft saturation curve instead of being hard-clipped, so a large error still produces a strong correction without instantly commanding one wheel near zero. The measured left/right wheel-speed difference is fed back as damping, reducing the alternating overshoot caused by chassis inertia. Flash this HEX before the next run and record the telemetry directory; do not compare a run made with the previous HEX against this controller. An immutable copy is kept at `Debug/pid_lab_mspm0_guard26_adaptive_damping_20260718.hex`.
 
 ## Guard19 换电脑交接与烧录注意事项
 
