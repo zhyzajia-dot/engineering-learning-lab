@@ -133,7 +133,7 @@ GIMBAL_SQUARE_TARGET_DELTA_CONFIRM = 3
 # 60-degree communication backstop so a normal heavy-platform turn is not
 # stopped at the old 25-degree threshold.
 GIMBAL_HARD_YAW_GUARD_X10 = 600
-GIMBAL_HARD_YAW_GUARD_CONFIRM = 3
+GIMBAL_HARD_YAW_GUARD_CONFIRM = 15
 
 PARAMETER_DISPLAY_ORDER = tuple(FIRMWARE_DEFAULT_PARAMETERS) + ("GSTART",)
 GIMBAL_RUNTIME_PARAMETERS = tuple(FIRMWARE_DEFAULT_PARAMETERS) + ("GSTART",)
@@ -189,10 +189,10 @@ def update_gimbal_hard_yaw_guard(
     enabled: bool,
     consecutive: int,
 ) -> int:
-    """Count only sustained 60-degree yaw; gray error is never a host STOP."""
+    """Count sustained yaw only when the grayscale line is also absent."""
     if (
         not enabled or sample is None or sample.mode != "SQUARE" or
-        sample.square_state != 0
+        sample.square_state != 0 or sample.line_valid
     ):
         return 0
     if abs(sample.yaw_x10) >= GIMBAL_HARD_YAW_GUARD_X10:
@@ -1259,6 +1259,7 @@ class AutoTuner:
             validation_samples: list[PidSample] = []
             validation_edges: set[int] = set()
             validation_announced = False
+            validation_warning_reported = False
             center_streak = 0
             deadline = time.monotonic() + GIMBAL_AUTO_TIMEOUT_SECONDS
             final_validation_score: float | None = None
@@ -1620,12 +1621,14 @@ class AutoTuner:
                             # sensor.  Keep the already accepted incumbent,
                             # do not issue STOP, and let the line PID finish
                             # the current edge.
-                            self._status(
-                                "GIMBAL VALIDATION OUTSIDE SCORE WINDOW: "
-                                f"{final_validation_score:.3f} vs "
-                                f"{incumbent_score:.3f}; keeping incumbent "
-                                "and continuing line control"
-                            )
+                            if not validation_warning_reported:
+                                validation_warning_reported = True
+                                self._status(
+                                    "GIMBAL VALIDATION OUTSIDE SCORE WINDOW: "
+                                    f"{final_validation_score:.3f} vs "
+                                    f"{incumbent_score:.3f}; keeping "
+                                    "incumbent and continuing line control"
+                                )
                             final_validation_score = incumbent_score
 
                     # Do not stop when the minimum learning count is reached.

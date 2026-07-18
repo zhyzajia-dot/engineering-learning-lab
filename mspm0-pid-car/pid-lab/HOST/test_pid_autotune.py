@@ -911,7 +911,7 @@ class CliTests(unittest.TestCase):
             120,
         ))
 
-    def test_gimbal_host_guard_uses_only_sustained_hard_yaw(self) -> None:
+    def test_gimbal_host_guard_requires_hard_yaw_and_lost_line(self) -> None:
         sample = gui.PidSample(
             time_ms=1800,
             mode="SQUARE",
@@ -941,6 +941,11 @@ class CliTests(unittest.TestCase):
             cli.update_gimbal_hard_yaw_guard(sample, True, 0), 0
         )
         sample.yaw_x10 = gui.GIMBAL_HARD_YAW_GUARD_X10
+        self.assertEqual(
+            cli.update_gimbal_hard_yaw_guard(sample, True, 0), 0
+        )
+        sample.line_valid = 0
+        sample.line_mask = 0
         count = 0
         for _ in range(cli.GIMBAL_HARD_YAW_GUARD_CONFIRM):
             count = cli.update_gimbal_hard_yaw_guard(
@@ -1202,7 +1207,7 @@ class CliTests(unittest.TestCase):
         for index in range(gui.GIMBAL_HARD_YAW_GUARD_CONFIRM):
             link.data_queue.put(
                 f"LT,{1800 + index * 20},120,120,100,110,"
-                f"0,24,1,{gui.GIMBAL_HARD_YAW_GUARD_X10},0,0,0"
+                f"0,0,0,{gui.GIMBAL_HARD_YAW_GUARD_X10},0,0,0"
             )
         with self.assertRaisesRegex(RuntimeError, "HARD YAW GUARD"):
             tuner._wait_for_centered_line_window(required=5, timeout=0.5)
