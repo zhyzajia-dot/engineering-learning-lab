@@ -35,6 +35,8 @@ Current HEX: 110,765 bytes, SHA-256 `AE8EEBAB79A09863F7D56CAB1D653797C3CB8843EAE
 
 The heavy-platform correction is deliberately continuous: when the line error and filtered error velocity point outward, a bounded portion of forward speed is exchanged for capture margin; it never enters a fixed stop or a one-sided turn mode. The PD command is then passed through a soft saturation curve instead of being hard-clipped, so a large error still produces a strong correction without instantly commanding one wheel near zero. The measured left/right wheel-speed difference is fed back as damping, reducing the alternating overshoot caused by chassis inertia. Flash this HEX before the next run and record the telemetry directory; do not compare a run made with the previous HEX against this controller. An immutable copy is kept at `Debug/pid_lab_mspm0_guard26_adaptive_damping_20260718.hex`.
 
+Physical run `HOST/logs/gimbal_auto_full_lap_20260718_144017` completed the V4-style search at 180 mm/s: 36 `TURN CENTER` events, three validation laps, no firmware line-loss stop, and the saved winner `LINEKP=8250 / LINEKD=2350`. Its validation median score was 4.813 versus the incumbent median 5.197 (about 7.4% better); the maximum valid-line target differential was 248 mm/s, down from 320 mm/s in the previous heavy-gimbal run. The small invalid-line percentage in the telemetry is retained for diagnosis, but it did not trigger a stop or prevent a full lap.
+
 ## Guard19 换电脑交接与烧录注意事项
 
 本节优先于后面的历史 Guard9～Guard18 复盘。历史内容保留是为了追溯故障，不代表当前应烧录的版本。
