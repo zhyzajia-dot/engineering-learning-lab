@@ -148,6 +148,8 @@
 #define LAB_GIMBAL_TURN_TRAVEL_MAX_DEN            1
 #define LAB_GIMBAL_CAPTURE_BRAKE_MIN_MS      120U
 #define LAB_GIMBAL_CAPTURE_BRAKE_MAX_MS      450U
+#define LAB_GIMBAL_CAPTURE_BRAKE_PULSE_MS     40U
+#define LAB_GIMBAL_CAPTURE_BRAKE_PWM          45
 #define LAB_GIMBAL_CAPTURE_SETTLE_SPEED_MMPS  15
 #define LAB_GIMBAL_CAPTURE_SETTLE_CONFIRM      3U
 #define LAB_GIMBAL_CAPTURE_ALIGN_SPEED_MMPS   100
@@ -169,7 +171,7 @@
 #define LAB_GIMBAL_STARTUP_HEADING_STOP_X10 32767
 #define LAB_GIMBAL_LINE_HEADING_STOP_X10   32767
 #define LAB_GIMBAL_LINE_HEADING_CONFIRM      3U
-#define LAB_GIMBAL_GUARD_VERSION              21
+#define LAB_GIMBAL_GUARD_VERSION              22
 /* 灰度有效位掩码：低 7 位为有效检测位 */
 #define LAB_LINE_SENSOR_VALID_MASK   0x7FU
 
@@ -3343,7 +3345,16 @@ static uint8_t square_service_turn(uint32_t nowMs)
             g_rightPwm = 0;
             g_leftTarget = 0;
             g_rightTarget = 0;
-            MOTOR_Stop();
+            /* A hard stop still left the heavy chassis moving about 8 mm
+             * after Guard21's earlier taper. Apply a short, low counter-torque
+             * pulse opposite to the CCW turn, then hold the bridge stopped. */
+            if (elapsed < LAB_GIMBAL_CAPTURE_BRAKE_PULSE_MS) {
+                g_leftPwm = LAB_GIMBAL_CAPTURE_BRAKE_PWM;
+                g_rightPwm = (int16_t)(-LAB_GIMBAL_CAPTURE_BRAKE_PWM);
+                MOTOR_SetPWM(g_leftPwm, g_rightPwm);
+            } else {
+                MOTOR_Stop();
+            }
 
             if ((elapsed >= LAB_GIMBAL_CAPTURE_BRAKE_MIN_MS) &&
                 (leftSpeed <= LAB_GIMBAL_CAPTURE_SETTLE_SPEED_MMPS) &&
