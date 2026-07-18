@@ -51,6 +51,11 @@ GIMBAL_GSTART_LIMIT_MMPS = 35
 GIMBAL_BOOTSTRAP_PARAMETERS = {
     "LINEKP": GIMBAL_BOOTSTRAP_LINE_PAIR[0],
     "LINEKD": GIMBAL_BOOTSTRAP_LINE_PAIR[1],
+    # TURN CAPTURE is emitted at the 3/4-distance gate.  Never carry a
+    # previous raw capture value (for example 93 mm) into a new search.
+    # Start from the proven full-turn distance and let firmware learn only
+    # after a complete corner has been observed.
+    "TURNDIST": 98,
     "TURNFAST": 165,
     "TURNSLOW": 110,
     "TURNMARGIN": 180,
@@ -539,7 +544,8 @@ def run_gimbal_auto(
         # temporarily violating TURNFAST >= TURNSLOW in firmware validation.
         tuner._send_set("TURNSLOW", 80)
         for name in (
-            "LINEKP", "LINEKD", "TURNFAST", "TURNMARGIN", "TURNEXIT"
+            "LINEKP", "LINEKD", "TURNDIST", "TURNFAST", "TURNMARGIN",
+            "TURNEXIT"
         ):
             value = GIMBAL_BOOTSTRAP_PARAMETERS[name]
             tuner._send_set(name, value)
@@ -575,15 +581,13 @@ def run_gimbal_auto(
             f"GUARDVER={bootstrap['GUARDVER']}"
         )
         print(
-            "GIMBAL AUTO Guard25: no fixed qualification lap. The first "
-            "straight edge is scored immediately; bounded LINEKP/LINEKD "
-            "coordinate trials switch one parameter at a time only on stable "
-            "centered windows. Clearly worse trials roll back in RAM. "
-            "TURN CAPTURE/CENTER/LEARN (and optional SEARCH) are tracked; "
-            "Two valid centered corners are enough to learn turn geometry; "
-            "the car continues until firmware emits SQUARE DONE. Flash SAVE "
-            "then commits the incumbent, and a late score fluctuation cannot "
-            "stop the car while a sensor still sees the line."
+            "GIMBAL AUTO Guard25/V4: each LINEKP/LINEKD candidate must "
+            "complete a full four-edge counter-clockwise lap. Scores include "
+            "post-turn recovery, ripple, overshoot, reversals and line loss; "
+            "the incumbent and challenger are alternated for repeatability. "
+            "TURNDIST starts at the full-turn 98 mm baseline; firmware's "
+            "TURN CAPTURE/CENTER/LEARN remains an observer, not a raw gyro "
+            "scale calibration. Only a full-lap winner is saved."
         )
         previous_worker = tuner.thread
         tuner.start_gimbal_auto(args.speed, original)

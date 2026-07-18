@@ -1,5 +1,11 @@
 # Current handoff (2026-07-18, Guard25)
 
+## 当前行动版：V4 式完整一圈自动调参
+
+`gimbal-auto` 现在采用 V4 的闭环搜索：每个 `LINEKP/LINEKD` 候选必须完成逆时针正方形的四条边，评分包含出弯恢复、P95 误差、蛇形/反向次数、目标差速跳变和丢线比例；随后交替复测 incumbent/challenger，只有完整一圈的中位数至少改善 3% 才保存。一次调参会话会跑多圈，这是为了得到可重复的整圈冠军参数。
+
+会话开始时会把旧的 `TURNDIST<98`（例如把 `TURN CAPTURE` 的 3/4 距离误存成 93）恢复为 V4 的完整转弯基准 `98 mm`。固件的 `TURN CAPTURE/CENTER/LEARN` 继续用于在线观察转弯几何；失真的绝对陀螺仪角度不作为唯一转弯完成条件。最近的固定参数验证发生在第一弯出弯后的同一条直线上振荡，日志中没有第二次 `TURN CAPTURE`，所以问题不是“第二弯识别到了却被限制停下”。
+
 The current source and default firmware are Guard25. Guard24's second-corner run showed the actual track pattern was `mask=13` followed by `mask=7` (three left sensors), so even the four-sensor detector never started the turn. Guard25 admits only these two three-sensor masks after at least one corner has completed, while still rejecting the historical straight-line `mask=14` false turn. The valid-edge PID handoff, slower GIMBAL pair (`TURNFAST=165`, `TURNSLOW=110`), `1/2×TURNDIST` taper, and short counter-torque remain.
 
 The host-side post-corner target-differential guard is intentionally set to `260 mm/s`, above the firmware's normal `200 mm/s` GIMBAL correction envelope. A large but valid outer-sensor error is therefore handed back to grayscale PID; only malformed telemetry beyond the physical envelope is stopped by the host.
@@ -12,7 +18,7 @@ For recovery, `gimbal-auto` also detects an old collapsed value below `80 mm` an
 
 The three-corner run proved that absolute IMU yaw is cumulative across track edges: after three successful `TURN CENTER` events the car still had `mask=48/error=6/line_valid=1`, while yaw crossed `-60°`. The host hard-yaw backstop therefore no longer stops on yaw alone. It requires the grayscale line to be absent as well, sustained for `15` compact samples; a valid gray line always remains under firmware PID ownership.
 
-The real course finishes at the fourth corner, so `gimbal-auto` now requests one firmware lap rather than the historical three-lap qualification run. Learning may complete after two corners, motion continues through corner four, and `SQUARE DONE` becomes the actual finish/save boundary.
+The full-lap tuner intentionally requests multiple firmware laps, as V4 did, because each candidate needs a complete four-edge measurement. After `GIMBAL COMPLETE`, run a separate fixed-parameter square for physical validation; `SQUARE DONE` remains the normal course boundary for that validation run.
 
 Physical validation at `2026-07-18 13:11` completed all four corners and reached `GIMBAL COMPLETE`. Captures occurred at `76/71/68/65 mm`; all four produced valid `TURN CENTER` and `TURN LEARN` events. The corrected `×4/3` learner saved `TURNDIST=93`, while the proven line pair remained `LINEKP=8250/LINEKD=2250`. Final readback was `IDLE/SAFE`, `mask=48`, `GUARDVER=25`, `PROFILE=1`.
 

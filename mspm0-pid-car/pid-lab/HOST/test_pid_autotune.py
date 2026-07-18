@@ -1456,6 +1456,7 @@ class CliTests(unittest.TestCase):
                 mock.call("TURNSLOW", 80),
                 mock.call("LINEKP", 8250),
                 mock.call("LINEKD", 2250),
+                mock.call("TURNDIST", 98),
                 mock.call("TURNFAST", 165),
                 mock.call("TURNMARGIN", 180),
                 mock.call("TURNEXIT", 140),

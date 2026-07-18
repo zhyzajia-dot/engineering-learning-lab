@@ -755,19 +755,22 @@ class AutoTuner:
         speed_mmps: int = 120,
         rollback_snapshot: dict[str, int] | None = None,
     ) -> None:
-        """Start the Guard9 single-session GIMBAL line/turn autotune."""
+        """Start the V4-style full-lap GIMBAL line autotune.
+
+        The old Guard25 worker changed LINEKP/LINEKD inside a single lap and
+        scored short straight windows.  That made a temporary post-corner
+        oscillation look like a good candidate.  GIMBAL now uses the same
+        complete-four-edge A/B engine as the V4 line tuner; the argument is
+        retained for CLI rollback compatibility.
+        """
         if self.running:
             return
         if not 80 <= speed_mmps <= 200:
             raise ValueError("GIMBAL autotune speed must be 80..200 mm/s")
         self.cancel_event.clear()
-        snapshot = (
-            dict(rollback_snapshot)
-            if rollback_snapshot is not None else None
-        )
         self.thread = threading.Thread(
-            target=self._run_gimbal_continuous_auto,
-            args=(speed_mmps, snapshot),
+            target=self._run_line,
+            args=(speed_mmps, "GIMBAL", rollback_snapshot),
             daemon=True,
         )
         self.thread.start()
@@ -1836,6 +1839,7 @@ class AutoTuner:
         self,
         tune_speed_mmps: int = LINE_TUNE_SPEED_MMPS,
         profile_name: str | None = None,
+        rollback_snapshot: dict[str, int] | None = None,
     ) -> None:
         """方框模式下的循迹 LINEKP / LINEKD 自动寻优主流程。
 
@@ -1851,8 +1855,13 @@ class AutoTuner:
         try:
             self.feedforward_diagnostics = {}
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            session_prefix = (
+                "gimbal_auto_full_lap" if profile_name == "GIMBAL"
+                else "line"
+            )
             self.session_dir = (
-                Path(__file__).parent / "logs" / f"line_{stamp}"
+                Path(__file__).parent / "logs" /
+                f"{session_prefix}_{stamp}"
             )
             self.session_dir.mkdir(parents=True, exist_ok=True)
             self.link.set_trace_path(self.session_dir / "protocol_trace.log")
@@ -1861,6 +1870,19 @@ class AutoTuner:
             if profile_name is not None:
                 self._select_profile(profile_name)
             snapshot = self._read_parameters()
+            if (
+                profile_name == "GIMBAL" and
+                int(snapshot.get("TURNDIST", 98)) < 98
+            ):
+                # A TURN CAPTURE event is emitted at roughly 3/4 of the
+                # nominal distance.  A stale capture value must not become
+                # the next run's full-turn distance.
+                self._send_set("TURNDIST", 98)
+                snapshot["TURNDIST"] = 98
+                self._status(
+                    "GIMBAL SAFE BASELINE: TURNDIST 98 (replaced stale "
+                    "capture-distance value)"
+                )
             self._configure_gimbal_square_guard(snapshot, tune_speed_mmps)
             self._verify_motor_driver()
             # 静止预检必须确认线位于中心，不能再把“mask 非零”等同于安全。
@@ -1886,8 +1908,9 @@ class AutoTuner:
                 raise RuntimeError("compact line telemetry was not enabled")
             self._start_square_reliably(tune_speed_mmps, 10)
             self._status(
-                f"Square line autotune running at {tune_speed_mmps} mm/s; "
-                "turns are excluded from scoring"
+                f"{'GIMBAL full-lap' if profile_name == 'GIMBAL' else 'Square line'} "
+                f"autotune running at {tune_speed_mmps} mm/s; "
+                "each candidate must complete four edges"
             )
 
             runtime_pair = (int(snapshot["LINEKP"]), int(snapshot["LINEKD"]))
@@ -2037,8 +2060,10 @@ class AutoTuner:
             champion_path.write_text(
                 json.dumps(result, indent=2), encoding="ascii"
             )
+            complete_label = "GIMBAL COMPLETE" if profile_name == "GIMBAL" \
+                else "LINE COMPLETE"
             self._status(
-                f"LINE COMPLETE: Kp={best_kp}/1000, "
+                f"{complete_label}: Kp={best_kp}/1000, "
                 f"Kd={best_kd}/1000, saved to {result_path}"
             )
         except Exception as exc:
@@ -2049,13 +2074,21 @@ class AutoTuner:
                 pass
             if snapshot is not None and not committed:
                 try:
-                    self._restore_runtime_parameters(
-                        snapshot, LINE_RUNTIME_PARAMETERS
-                    )
-                    rollback = "; runtime parameters restored"
+                    if profile_name == "GIMBAL" and rollback_snapshot is not None:
+                        self._restore_gimbal_runtime_parameters(
+                            rollback_snapshot
+                        )
+                        rollback = "; original GIMBAL parameters restored"
+                    else:
+                        self._restore_runtime_parameters(
+                            snapshot, LINE_RUNTIME_PARAMETERS
+                        )
+                        rollback = "; runtime parameters restored"
                 except Exception as restore_exc:
                     rollback = f"; rollback failed: {restore_exc}"
-            failure = f"LINE FAILED: {exc}{rollback}"
+            failure_label = "GIMBAL FAILED" if profile_name == "GIMBAL" \
+                else "LINE FAILED"
+            failure = f"{failure_label}: {exc}{rollback}"
             self._save_failure(failure)
             self._status(failure)
         finally:
