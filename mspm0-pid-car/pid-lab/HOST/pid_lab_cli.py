@@ -709,11 +709,9 @@ def run_square(tuner: AutoTuner, args: argparse.Namespace) -> None:
                 raise RuntimeError(
                     "HOST SQUARE ERROR,GIMBAL HARD YAW GUARD"
                 )
-            if target_guard_count >= GIMBAL_SQUARE_TARGET_DELTA_CONFIRM:
-                tuner.link.send("STOP")
-                raise RuntimeError(
-                    "HOST SQUARE ERROR,GIMBAL TARGET DIFFERENTIAL GUARD"
-                )
+            # V4 lets grayscale PD request a large split while recovering an
+            # outer sensor.  Do not stop on target differential alone; the
+            # firmware/line-valid state remains the motion authority.
             turn_event = parse_turn_event(line)
             if turn_event is not None:
                 turn_events.append(turn_event)

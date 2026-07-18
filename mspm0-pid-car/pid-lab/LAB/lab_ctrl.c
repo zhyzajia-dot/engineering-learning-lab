@@ -130,7 +130,7 @@
 #define LAB_GIMBAL_EXIT_SPEED_MMPS          200
 /* GIMBAL 首边不再在不可观测低速区爬 1.5 秒；1 秒仍保持线性斜坡，
  * 但更快越过约 80 mm/s 的可靠编码器区。 */
-#define LAB_GIMBAL_START_RAMP_MS             300U
+#define LAB_GIMBAL_START_RAMP_MS             600U
 /* 重载车约 50°～70° 扫到的右外侧通常仍是正在离开的旧入边；新出边
  * 会在更后段从左侧/中心重新进入。外线不再直接等于“转弯完成”。
  * A 相编码器又无法区分正反方向，因此切换前进前必须真实停稳。 */
@@ -3790,7 +3790,6 @@ static void update_closed_loop(uint32_t nowMs)
 #if LAB_ENABLE_DUAL_PROFILE
         if ((gimbalLineControl != 0U) && (valid != 0U)) {
             int16_t absoluteError = abs_i16(g_lineError);
-            int16_t scheduledSpeed = g_testSpeed;
 
             gimbalLineLimit = clamp_i16(
                 (int32_t)LAB_GIMBAL_LINE_MIN_TURN_LIMIT_MMPS +
@@ -3805,19 +3804,9 @@ static void update_closed_loop(uint32_t nowMs)
                 LAB_GIMBAL_LINE_MIN_SLEW_MMPS,
                 LAB_GIMBAL_LINE_MAX_SLEW_MMPS);
 
-            if (absoluteError >
-                LAB_GIMBAL_LINE_SPEED_DROP_START_ERROR) {
-                scheduledSpeed = clamp_i16(
-                    (int32_t)g_testSpeed -
-                    (((int32_t)absoluteError -
-                      LAB_GIMBAL_LINE_SPEED_DROP_START_ERROR) *
-                     LAB_GIMBAL_LINE_SPEED_DROP_PER_ERROR_MMPS),
-                    LAB_GIMBAL_LINE_SPEED_FLOOR_MMPS,
-                    g_testSpeed);
-                if (baseTarget > scheduledSpeed) {
-                    baseTarget = scheduledSpeed;
-                }
-            }
+            /* Keep the requested base speed.  V4's encoder PI and gray PD
+             * already provide the needed correction; a second speed-drop
+             * scheduler only made the heavy platform hesitate at bends. */
         }
 #endif
 

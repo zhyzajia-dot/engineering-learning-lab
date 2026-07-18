@@ -1022,13 +1022,9 @@ class AutoTuner:
             raise RuntimeError(
                 "HOST SQUARE ERROR,GIMBAL HARD YAW GUARD"
             )
-        if self.gimbal_target_guard_count >= (
-            GIMBAL_SQUARE_TARGET_DELTA_CONFIRM
-        ):
-            self.link.send("STOP")
-            raise RuntimeError(
-                "HOST SQUARE ERROR,GIMBAL TARGET DIFFERENTIAL GUARD"
-            )
+        # A large target split is normal while V4-style PD pulls an outer
+        # sensor back onto the line.  Keep it in telemetry for scoring, but
+        # never stop a vehicle that still reports a valid gray line.
 
     def _verify_centered_line_sensor(self) -> None:
         """Require several centered stationary readings before any motion."""
