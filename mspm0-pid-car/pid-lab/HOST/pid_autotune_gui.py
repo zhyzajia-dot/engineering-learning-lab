@@ -1698,9 +1698,15 @@ class AutoTuner:
                 "valid_corner_count"
             ] = len(capture_travels)
             if len(capture_travels) >= GIMBAL_REQUIRED_CENTERED_CORNERS:
+                # TURN CAPTURE is emitted at the 3/4-distance capture gate;
+                # it is not the nominal full turn distance.  Feeding the raw
+                # capture travel back into TURNDIST shrinks the next run
+                # (98 -> 72 mm in the previous session) and makes the next
+                # corner capture too early.  Undo that geometry here.
+                capture_median = statistics.median(capture_travels)
                 learned_turn_distance = max(
                     50,
-                    min(140, int(round(statistics.median(capture_travels)))),
+                    min(140, int(round(capture_median * 4.0 / 3.0))),
                 )
                 self._send_set("TURNDIST", learned_turn_distance)
                 turn_median_learning["TURNDIST"].update({
