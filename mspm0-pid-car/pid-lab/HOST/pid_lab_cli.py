@@ -525,6 +525,12 @@ def run_gimbal_auto(
                 else GIMBAL_STAGE1_PARAMETERS["GSTART"]
             ),
         }
+        # A legacy run may have stored the raw 3/4-distance capture travel
+        # (for example TURNDIST=72).  Do not let that collapsed value govern
+        # the next physical run; the corrected learner will replace it after
+        # two valid corners.
+        if original.get("TURNDIST", FIRMWARE_DEFAULT_PARAMETERS["TURNDIST"]) < 80:
+            stage_parameters["TURNDIST"] = FIRMWARE_DEFAULT_PARAMETERS["TURNDIST"]
         for name, value in stage_parameters.items():
             if original.get(name) != value:
                 tuner._send_set(name, value)
