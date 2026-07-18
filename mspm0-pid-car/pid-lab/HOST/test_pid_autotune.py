@@ -756,7 +756,7 @@ class CliTests(unittest.TestCase):
             time_ms=11730,
             mode="SQUARE",
             left_target=20,
-            right_target=220,
+            right_target=300,
             left_speed=0,
             right_speed=0,
             left_pwm=0,
@@ -777,7 +777,7 @@ class CliTests(unittest.TestCase):
             cli.update_gimbal_square_target_guard(sample, True, count), 0
         )
         sample.left_target = 20
-        sample.right_target = 220
+        sample.right_target = 300
         self.assertEqual(
             cli.update_gimbal_square_target_guard(sample, False, count), 0
         )

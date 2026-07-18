@@ -1,0 +1,1 @@
+GIMBAL FAILED: IMU is not ready for GIMBAL autotune: None; rollback failed: MCU could not select GIMBAL: ERR COMMAND; SEND HELP

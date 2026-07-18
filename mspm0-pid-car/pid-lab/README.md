@@ -2,6 +2,8 @@
 
 The current source and default firmware are Guard24. Guard23 completed the first corner and PID alignment, but the second corner entered as `mask=15` (four active left sensors); the GIMBAL corner detector still required five and never started the turn. Guard24 lowers that narrow detector to four active sensors while still rejecting the historical three-sensor `mask=14` false turn. The valid-edge PID handoff, slower GIMBAL pair (`TURNFAST=165`, `TURNSLOW=110`), `1/2×TURNDIST` taper, and short counter-torque remain.
 
+The host-side post-corner target-differential guard is intentionally set to `260 mm/s`, above the firmware's normal `200 mm/s` GIMBAL correction envelope. A large but valid outer-sensor error is therefore handed back to grayscale PID; only malformed telemetry beyond the physical envelope is stopped by the host.
+
 The design deliberately returns to the proven V4 ownership model instead of stacking independent recovery controllers:
 
 - Straight-line steering has one owner: grayscale error → PD → left/right speed targets → wheel PI/PWM. The heavy-gimbal automatic run starts at the historical champion `LINEKP=8250`, `LINEKD=2250` (the old `6750/2000` start could not reach that champion with local ±100 trials). D is active outside the small center deadband; candidates that worsen the same straight-edge score are rolled back.

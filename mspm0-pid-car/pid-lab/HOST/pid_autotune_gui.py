@@ -123,7 +123,11 @@ FIRMWARE_DEFAULT_PARAMETERS = {
 PROFILE_IDS = {"LIGHT": 0, "GIMBAL": 1}
 
 GIMBAL_GUARD_VERSION = 24
-GIMBAL_SQUARE_TARGET_DELTA_GUARD_MMPS = 160
+# GIMBAL line PID can legitimately request nearly the full 200 mm/s envelope
+# after a corner when only an outer sensor still sees the line. Keep a margin
+# above that physical envelope so the host catches malformed telemetry, not a
+# recoverable large-error correction.
+GIMBAL_SQUARE_TARGET_DELTA_GUARD_MMPS = 260
 GIMBAL_SQUARE_TARGET_DELTA_CONFIRM = 3
 # Guard24 leaves gray-line recovery to firmware. The host keeps only a broad
 # 60-degree communication backstop so a normal heavy-platform turn is not

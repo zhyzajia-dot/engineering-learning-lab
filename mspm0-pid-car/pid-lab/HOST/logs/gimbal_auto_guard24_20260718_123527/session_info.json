@@ -1,0 +1,9 @@
+{
+  "protocol": {
+    "version": 2,
+    "encoder_mm_per_count_x1000": 580,
+    "encoder_sample_ms": 10,
+    "stby": "HIGH"
+  },
+  "feedforward": {}
+}
