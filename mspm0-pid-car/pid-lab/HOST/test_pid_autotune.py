@@ -1578,7 +1578,7 @@ class CliTests(unittest.TestCase):
         tuner._select_profile.assert_called_once_with("GIMBAL")
         tuner._save_parameters.assert_not_called()
 
-    def test_gimbal_save_waits_for_four_unique_valid_centers(
+    def test_gimbal_save_waits_for_two_unique_valid_centers(
         self,
     ) -> None:
         runtime = {
@@ -1629,8 +1629,8 @@ class CliTests(unittest.TestCase):
             link.data_queue.put("TURN CENTER,4,900,122,0,0")
             link.data_queue.put("TURN CENTER,4,900,123,24,7")
             link.data_queue.put("TURN CENTER,2,900,124,48,6")
+            link.data_queue.put(centered(start + 80, 2))
             link.data_queue.put("TURN CENTER,3,900,125,24,0")
-            link.data_queue.put(centered(start + 80, 1))
             link.data_queue.put("TURN CENTER,4,900,126,48,6")
             link.data_queue.put(centered(start + 100, 2))
 
@@ -1670,7 +1670,7 @@ class CliTests(unittest.TestCase):
         ):
             tuner._run_gimbal_continuous_auto(120, runtime)
 
-        self.assertEqual(accepted_at_save, [{1, 2, 3, 4}])
+        self.assertEqual(accepted_at_save, [{1, 2}])
         tuner._save_parameters.assert_called_once_with()
         tuner._restore_gimbal_runtime_parameters.assert_not_called()
         tuner._save_failure.assert_not_called()

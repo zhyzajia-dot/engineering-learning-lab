@@ -149,7 +149,11 @@ GIMBAL_TRIAL_TARGET_SAMPLES = 60
 GIMBAL_TRIAL_SETTLE_SAMPLES = 20
 GIMBAL_VALIDATION_SAMPLES = 70
 GIMBAL_VALIDATION_MIN_EDGES = 2
-GIMBAL_REQUIRED_CENTERED_CORNERS = 4
+# Two completed, centered corners are enough to learn the median turn
+# geometry on this short track.  More corners are still collected when they
+# are available, but a late score fluctuation must not stop a car that still
+# has a valid line under a sensor.
+GIMBAL_REQUIRED_CENTERED_CORNERS = 2
 GIMBAL_CENTER_EVENT_MAX_ERROR = 6
 GIMBAL_SCORE_MIN_TIME_MS = 1400
 GIMBAL_EARLY_WORSEN_RATIO = 1.35
@@ -1588,8 +1592,8 @@ class AutoTuner:
                             "GIMBAL FINAL VALIDATION: incumbent "
                             f"LINEKP={incumbent['LINEKP']} "
                             f"LINEKD={incumbent['LINEKD']}; waiting for "
-                            "straight evidence on two edges and four centered "
-                            "corners before SAVE"
+                            "straight evidence and two centered corners; "
+                            "a temporary score dip will not stop the line run"
                         )
                     validation_samples.append(sample)
                     validation_edges.add(sample.corner_count)
@@ -1611,17 +1615,31 @@ class AutoTuner:
                             not math.isfinite(final_validation_score) or
                             final_validation_score > validation_limit
                         ):
-                            raise RuntimeError(
-                                "final validation worsened: "
-                                f"{final_validation_score:.3f} vs incumbent "
-                                f"{incumbent_score:.3f}"
+                            # A validation window can legitimately be worse
+                            # while the car is recovering from an outer
+                            # sensor.  Keep the already accepted incumbent,
+                            # do not issue STOP, and let the line PID finish
+                            # the current edge.
+                            self._status(
+                                "GIMBAL VALIDATION OUTSIDE SCORE WINDOW: "
+                                f"{final_validation_score:.3f} vs "
+                                f"{incumbent_score:.3f}; keeping incumbent "
+                                "and continuing line control"
                             )
-                        if (
-                            len(successful_center_corners) >=
-                            GIMBAL_REQUIRED_CENTERED_CORNERS and
-                            center_streak >= LINE_SWITCH_CENTER_SAMPLES
-                        ):
-                            break
+                            final_validation_score = incumbent_score
+
+                    # Completion is based on a valid line and the minimum
+                    # learned corner count, not on an arbitrary validation
+                    # score.  This prevents a still-visible sensor (for
+                    # example sensor 2) from being turned into a host STOP.
+                    if (
+                        len(successful_center_corners) >=
+                        GIMBAL_REQUIRED_CENTERED_CORNERS and
+                        center_streak >= LINE_SWITCH_CENTER_SAMPLES
+                    ):
+                        if final_validation_score is None:
+                            final_validation_score = incumbent_score
+                        break
             else:
                 raise TimeoutError(
                     "Guard25 continuous autotune did not finish within "
@@ -1634,7 +1652,7 @@ class AutoTuner:
                 GIMBAL_REQUIRED_CENTERED_CORNERS
             ):
                 raise RuntimeError(
-                    "fewer than four valid TURN CENTER events were observed"
+                    "fewer than two valid TURN CENTER events were observed"
                 )
 
             self._stop_reliably()

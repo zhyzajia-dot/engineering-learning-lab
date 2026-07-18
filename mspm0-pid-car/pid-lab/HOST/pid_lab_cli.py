@@ -513,8 +513,8 @@ def run_gimbal_auto(
                 f"Invalid learned GSTART readback: {learned_gstart}"
             )
 
-        # All preparation is RAM-only.  Guard25 performs the sole Flash SAVE
-        # only after four valid centered corners and final straight validation.
+        # All preparation is RAM-only. Guard25 performs the sole Flash SAVE
+        # after two valid centered corners and a line-safe handoff.
         stage_parameters = {
             **GIMBAL_LOAD_WHEEL_PARAMETERS,
             "SYNC": GIMBAL_STAGE1_PARAMETERS["SYNC"],
@@ -574,8 +574,9 @@ def run_gimbal_auto(
             "coordinate trials switch one parameter at a time only on stable "
             "centered windows. Clearly worse trials roll back in RAM. "
             "TURN CAPTURE/CENTER/LEARN (and optional SEARCH) are tracked; "
-            "Flash SAVE occurs only after at least four centered corners and "
-            "final validation."
+            "Flash SAVE occurs after two valid centered corners and a "
+            "line-safe handoff; a late score fluctuation cannot stop the "
+            "car while a sensor still sees the line."
         )
         previous_worker = tuner.thread
         tuner.start_gimbal_auto(args.speed, original)

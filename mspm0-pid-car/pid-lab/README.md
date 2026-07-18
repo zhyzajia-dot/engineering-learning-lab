@@ -4,6 +4,8 @@ The current source and default firmware are Guard25. Guard24's second-corner run
 
 The host-side post-corner target-differential guard is intentionally set to `260 mm/s`, above the firmware's normal `200 mm/s` GIMBAL correction envelope. A large but valid outer-sensor error is therefore handed back to grayscale PID; only malformed telemetry beyond the physical envelope is stopped by the host.
 
+Guard25 host completion no longer treats a late score fluctuation as a line-loss fault. After two valid centered corners, the incumbent PID is kept and turn geometry is learned; a validation window that is temporarily worse is reported and the vehicle continues under firmware grayscale PID while a sensor still sees the line. Emergency stops for serial loss, IMU faults, and a genuinely lost line remain enabled.
+
 The design deliberately returns to the proven V4 ownership model instead of stacking independent recovery controllers:
 
 - Straight-line steering has one owner: grayscale error → PD → left/right speed targets → wheel PI/PWM. The heavy-gimbal automatic run starts at the historical champion `LINEKP=8250`, `LINEKD=2250` (the old `6750/2000` start could not reach that champion with local ±100 trials). D is active outside the small center deadband; candidates that worsen the same straight-edge score are rolled back.
