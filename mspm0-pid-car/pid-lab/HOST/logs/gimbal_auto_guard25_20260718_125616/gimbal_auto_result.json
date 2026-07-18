@@ -1,0 +1,178 @@
+{
+  "profile": "GIMBAL",
+  "guard_version": 25,
+  "speed_mmps": 120,
+  "line_kp_x1000": 8250,
+  "line_kd_x1000": 2250,
+  "baseline_score": 3.346271,
+  "incumbent_score": 3.346271,
+  "validation_score": 4.125909,
+  "validation_edges": [
+    1,
+    2
+  ],
+  "successful_centered_corners": [
+    1,
+    2
+  ],
+  "capture_corners": [
+    1,
+    2
+  ],
+  "learn_corners": [
+    1,
+    2
+  ],
+  "trials": [
+    {
+      "parameter": "LINEKD",
+      "value": 2150,
+      "score": 3.986095,
+      "decision": "rejected",
+      "reason": "candidate did not improve by 3%: 3.986 vs 3.346",
+      "rollback_value": 2250
+    },
+    {
+      "parameter": "LINEKD",
+      "value": 2350,
+      "score": 4.064797,
+      "decision": "rejected",
+      "reason": "candidate did not improve by 3%: 4.065 vs 3.346",
+      "rollback_value": 2250
+    },
+    {
+      "parameter": "LINEKP",
+      "value": 8150,
+      "score": 4.524592,
+      "decision": "rejected",
+      "reason": "early score clearly worsened: 4.525 vs 3.346",
+      "rollback_value": 8250
+    },
+    {
+      "parameter": "LINEKP",
+      "value": 8350,
+      "score": 5.001545,
+      "decision": "rejected",
+      "reason": "early score clearly worsened: 5.002 vs 3.346",
+      "rollback_value": 8250
+    }
+  ],
+  "turn_events": [
+    {
+      "event": "capture",
+      "corner": 1,
+      "yaw_x10": 449,
+      "travel_mm": 75,
+      "mask": 48,
+      "error": 6
+    },
+    {
+      "event": "center",
+      "corner": 1,
+      "yaw_x10": 361,
+      "travel_mm": 93,
+      "mask": 48,
+      "error": 6
+    },
+    {
+      "event": "learn",
+      "corner": 1,
+      "turn_angle_x10": 900,
+      "turn_distance_mm": 92
+    },
+    {
+      "event": "capture",
+      "corner": 2,
+      "yaw_x10": 396,
+      "travel_mm": 70,
+      "mask": 16,
+      "error": 2
+    },
+    {
+      "event": "center",
+      "corner": 2,
+      "yaw_x10": 342,
+      "travel_mm": 80,
+      "mask": 16,
+      "error": 2
+    },
+    {
+      "event": "learn",
+      "corner": 2,
+      "turn_angle_x10": 900,
+      "turn_distance_mm": 87
+    }
+  ],
+  "turn_median_learning": {
+    "TURNANGLE": {
+      "applied": false,
+      "valid_corner_count": 0,
+      "value": null
+    },
+    "TURNDIST": {
+      "applied": true,
+      "valid_corner_count": 2,
+      "value": 72
+    }
+  },
+  "load_metadata": "load_metadata.json",
+  "load_metadata_written": true,
+  "load_metadata_facts": {
+    "schema_version": 1,
+    "profile": "GIMBAL",
+    "load": {
+      "heavy_gimbal_installed": true,
+      "gimbal_mass_g": null,
+      "total_vehicle_mass_g": null,
+      "mounting_mass_g": null
+    },
+    "power": {
+      "separate_gimbal_battery": true,
+      "electrical_connection_to_drive": false,
+      "gimbal_powered_and_stable": true,
+      "gimbal_attitude_stable": true,
+      "drive_battery_voltage_v": null
+    },
+    "geometry": {
+      "center_of_gravity_qualitative": "center_forward",
+      "center_of_gravity_mm": null,
+      "line_sensor_height_mm": null
+    },
+    "mechanical": {
+      "left_right_wheel_resistance": "similar"
+    },
+    "unknown_fields": [
+      "gimbal_mass_g",
+      "total_vehicle_mass_g",
+      "mounting_mass_g",
+      "drive_battery_voltage_v",
+      "center_of_gravity_mm",
+      "line_sensor_height_mm"
+    ],
+    "source": "user-confirmed qualitative facts; unknown values are intentionally null"
+  },
+  "saved_readback": {
+    "PROFILE": 1,
+    "FLASHVER": 3,
+    "GUARDVER": 25,
+    "LKP": 350,
+    "LKI": 100,
+    "RKP": 500,
+    "RKI": 350,
+    "LFF": 540,
+    "RFF": 520,
+    "LMIN": 90,
+    "RMIN": 85,
+    "SYNC": 500,
+    "BIAS": 80,
+    "GSTART": 10,
+    "LINEKP": 8250,
+    "LINEKD": 2250,
+    "TURNANGLE": 900,
+    "TURNFAST": 165,
+    "TURNSLOW": 110,
+    "TURNMARGIN": 180,
+    "TURNEXIT": 140,
+    "TURNDIST": 72
+  }
+}
