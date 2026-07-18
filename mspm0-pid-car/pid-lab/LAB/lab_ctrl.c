@@ -3027,7 +3027,11 @@ static int16_t gimbal_turn_pwm_for_travel(int16_t pwm,
     int32_t slowStart = ((int32_t)targetMm * 1L) / 2L;
     int32_t captureStart = ((int32_t)targetMm * 3L) / 4L;
     int16_t slow = clamp_i16(g_turnSlowPwm, 80, 140);
-    int16_t captureLimit = (slow > 90) ? 70 : 60;
+    /* Do not starve the heavy chassis in the capture window.  The previous
+     * fixed 70/60 PWM cap made the wheels stall around 72 mm, exactly when a
+     * valid gray line was already visible.  Keep a modest taper, but leave
+     * at least 100 PWM for the loaded GIMBAL turn. */
+    int16_t captureLimit = clamp_i16((int32_t)slow - 10L, 100, 120);
     int16_t limit;
 
     /* The heavy gimbal still carried 29 mm after the Guard20 hard stop
@@ -3260,14 +3264,11 @@ static uint8_t square_service_turn(uint32_t nowMs)
             }
 
             /* Basic exit fallback: once the old center line is cleared,
-             * a valid center/left-side line after roughly 60 degrees is
-             * enough to brake.  The stricter ordered candidate above is
-             * still retained for learning, but it must not keep the car
-             * rotating past a real new line. */
+             * a valid center/left-side line after 1/2 turn travel is enough
+             * to brake.  Encoder distance and gray line are direct evidence;
+             * the IMU is diagnostic because this platform under-reports yaw. */
             if ((g_turnLineCleared != 0U) &&
                 (turnLineValid != 0U) &&
-                (abs_i16(g_turnYawX10) >=
-                 LAB_GIMBAL_CAPTURE_CENTER_MIN_YAW_X10) &&
                 (abs_i16(turnLineError) <= LAB_LINE_FAR_ERROR) &&
                 (center_line_seen(g_lineMask) != 0U) &&
                 (((int32_t)g_turnTravelMm * 2L) >=
