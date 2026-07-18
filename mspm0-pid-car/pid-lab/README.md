@@ -31,7 +31,7 @@ The design deliberately returns to the proven V4 ownership model instead of stac
 
 The Guard18 run is the reason for Guard19: the vehicle crossed `mask=48` at travel `75..91 mm`, but Guard18 waited until `98 mm`, then saw `mask=96/64` and stopped with `LINE NOT CAPTURED`. Guard19 moved capture back into the V4-style sweep. Guard20/21 reduced turn speed and coast; Guard22/23 proved the capture and PID handoff; Guard24's second-corner `mask=13/7` detector miss is the sole Guard25 change.
 
-Current HEX: 109,950 bytes, SHA-256 `07B8BA031703EDF19A1BE6D8FA10C366C0D23E2888F61E078959A50354DFC2B9` (run `Get-FileHash -Algorithm SHA256 .\Debug\pid_lab_mspm0.hex` before flashing). This build removes the false IMU-yaw capture gate and host target-differential stop, keeps the requested base speed through gray-PD recovery, raises heavy-GIMBAL capture torque, and shortens the GIMBAL corner confirmation window.
+Current HEX: 110,056 bytes, SHA-256 `71001630646B79FAC3CB121B4545F37CFB042EE1AED8A3A0215323A5290C774F` (run `Get-FileHash -Algorithm SHA256 .\Debug\pid_lab_mspm0.hex` before flashing). This build adds wheel-speed damping to the gray PD loop, uses continuous P/D gain scheduling, and keeps the earlier no-false-stop and V4-like speed changes.
 
 ## Guard19 换电脑交接与烧录注意事项
 

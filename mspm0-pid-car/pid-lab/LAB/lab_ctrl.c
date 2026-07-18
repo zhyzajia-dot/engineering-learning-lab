@@ -124,6 +124,7 @@
 #define LAB_GIMBAL_LINE_SPEED_FLOOR_MMPS    130
 #define LAB_GIMBAL_LINE_SPEED_DROP_START_ERROR 10
 #define LAB_GIMBAL_LINE_SPEED_DROP_PER_ERROR_MMPS 2
+#define LAB_GIMBAL_WHEEL_DAMP_X1000        450
 #define LAB_GIMBAL_GSTART_LIMIT_MMPS           35
 #define LAB_GIMBAL_EXIT_TURN_LIMIT_MMPS     160
 #define LAB_GIMBAL_EXIT_TOTAL_LIMIT_MMPS    160
@@ -3667,6 +3668,9 @@ static void update_closed_loop(uint32_t nowMs)
         return;
     }
     g_lastSpeedSequence = sequence;
+    /* Read measured wheel speeds before calculating the gray-line command. */
+    leftSpeed = ENCODER_GetLeftSpeed();
+    rightSpeed = ENCODER_GetRightSpeed();
 
     /* 方框模式正在转弯：由子状态机接管，调用方不再做其他处理 */
     if (square_service_turn(nowMs) != 0U) {
@@ -3947,8 +3951,6 @@ static void update_closed_loop(uint32_t nowMs)
         /* 灰度外环：根据误差计算左右差速 */
         if (valid != 0U) {
             int16_t absoluteError = abs_i16(g_lineError);
-            int16_t previousAbsoluteError =
-                abs_i16(g_linePreviousError);
             int16_t turnLimit = LAB_LINE_TURN_LIMIT_MMPS;
             int16_t desiredTurn;
             int16_t effectiveError = g_lineError;
@@ -3965,21 +3967,19 @@ static void update_closed_loop(uint32_t nowMs)
 
             /* 中心死区不继续“追线”；中区正常，远区增强 P。 */
             if (absoluteError <= LAB_LINE_CENTER_ERROR) {
-                pGain = (pGain * 3L) / 4L;
-            } else if (absoluteError >= LAB_LINE_FAR_ERROR) {
-                pGain = (highSpeed != 0U) ?
-                    ((pGain * 5L) / 4L) : (pGain * 2L);
+                pGain = (pGain * 9L) / 10L;
+            } else {
+                int32_t boost = 1000L + ((int32_t)absoluteError * 40L);
+                if (boost > 1800L) boost = 1800L;
+                pGain = (pGain * boost) / 1000L;
             }
 
             /* D 项使用滤波差分；收敛时适度刹车，避免原先 2 倍 D 反打。 */
-            if (absoluteError < previousAbsoluteError) {
-                dGain = dGain * 2L;
-            } else {
-                dGain = dGain / 2L;
-            }
-            if (absoluteError <= 2) {
-                /* 真死区内关闭 D，旧修正只平滑回零，不再跨中心反打。 */
-                dGain = 0;
+            dGain = g_lineKdX1000;
+            if (absoluteError >= LAB_LINE_FAR_ERROR) {
+                dGain = (dGain * 5L) / 4L;
+            } else if (absoluteError <= 2) {
+                dGain = (dGain * 3L) / 4L;
             }
 
             /* 高速时中心修正严格限幅；偏差越大，允许更强且更快地拉回。 */
@@ -4014,7 +4014,9 @@ static void update_closed_loop(uint32_t nowMs)
 #endif
             desiredTurn = clamp_i16(
                 ((pGain * effectiveError) +
-                 (dGain * errorDelta)) / 1000L,
+                 (dGain * errorDelta) -
+                 (((int32_t)(leftSpeed - rightSpeed) *
+                   LAB_GIMBAL_WHEEL_DAMP_X1000) / 1000L)) / 1000L,
                 (int16_t)-turnLimit, turnLimit);
             /* 所有速度都必须平滑变化；反向修正自然经过零点。 */
             g_lineTurnMmps = clamp_i16(
