@@ -74,7 +74,7 @@ def require_gimbal_square_guard(
             "GIMBAL guard firmware is not active; flash the current "
             "Debug/pid_lab_mspm0.hex before motion"
         )
-    return is_gimbal and speed_mmps <= 200
+    return is_gimbal and speed_mmps <= 250
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -131,7 +131,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     gimbal_auto.add_argument("--port", required=True)
     gimbal_auto.add_argument(
-        "--speed", type=int, choices=(120, 160, 180), default=160
+        "--speed", type=int, choices=(120, 160, 180, 250), default=160
     )
     gimbal_auto.add_argument(
         "--track-safe", action="store_true",

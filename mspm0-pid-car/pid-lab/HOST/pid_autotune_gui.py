@@ -205,7 +205,7 @@ def update_gimbal_hard_yaw_guard(
 
 def line_candidate_timeout_seconds(target_speed_mmps: int) -> float:
     """Allow a full four-edge sample at low GIMBAL speeds."""
-    return 60.0 if target_speed_mmps <= 200 else 25.0
+    return 60.0 if target_speed_mmps <= 200 else 45.0
 
 
 def parse_parameter_report(line: str) -> dict[str, int]:
@@ -765,8 +765,8 @@ class AutoTuner:
         """
         if self.running:
             return
-        if not 80 <= speed_mmps <= 200:
-            raise ValueError("GIMBAL autotune speed must be 80..200 mm/s")
+        if not 80 <= speed_mmps <= 250:
+            raise ValueError("GIMBAL autotune speed must be 80..250 mm/s")
         self.cancel_event.clear()
         self.thread = threading.Thread(
             target=self._run_line,

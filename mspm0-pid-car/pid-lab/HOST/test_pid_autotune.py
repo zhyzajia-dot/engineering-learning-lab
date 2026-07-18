@@ -507,7 +507,8 @@ class AlgorithmTests(unittest.TestCase):
     def test_low_speed_line_candidate_timeout_allows_full_square(self) -> None:
         self.assertGreaterEqual(gui.line_candidate_timeout_seconds(120), 60.0)
         self.assertGreaterEqual(gui.line_candidate_timeout_seconds(200), 60.0)
-        self.assertEqual(gui.line_candidate_timeout_seconds(340), 25.0)
+        self.assertEqual(gui.line_candidate_timeout_seconds(250), 45.0)
+        self.assertEqual(gui.line_candidate_timeout_seconds(340), 45.0)
 
     def test_adaptive_feedforward_fit_brackets_target(self) -> None:
         tuner = make_tuner(FakeLink())

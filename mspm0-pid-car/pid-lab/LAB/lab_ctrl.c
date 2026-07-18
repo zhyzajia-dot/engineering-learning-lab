@@ -3987,8 +3987,18 @@ static void update_closed_loop(uint32_t nowMs)
                 speedScale = 1000L - risk;
                 adaptiveTarget = (int16_t)(((int32_t)baseTarget *
                                             speedScale) / 1000L);
-                if (adaptiveTarget < LAB_GIMBAL_LINE_SPEED_FLOOR_MMPS) {
-                    adaptiveTarget = LAB_GIMBAL_LINE_SPEED_FLOOR_MMPS;
+                {
+                    int16_t speedFloor = LAB_GIMBAL_LINE_SPEED_FLOOR_MMPS;
+
+                    /* At a faster requested speed, keep more common-mode
+                     * velocity instead of letting a large correction turn
+                     * into one fast wheel and one nearly stopped wheel. */
+                    if (g_testSpeed > 180) {
+                        speedFloor = (int16_t)(g_testSpeed - 70);
+                    }
+                    if (adaptiveTarget < speedFloor) {
+                        adaptiveTarget = speedFloor;
+                    }
                 }
                 if (baseTarget > adaptiveTarget) {
                     baseTarget = adaptiveTarget;
@@ -4051,6 +4061,30 @@ static void update_closed_loop(uint32_t nowMs)
                      (((int32_t)(leftSpeed - rightSpeed) *
                        LAB_GIMBAL_WHEEL_DAMP_X1000) / 1000L)) / 1000L;
                 int32_t absoluteTurn = (rawTurn >= 0L) ? rawTurn : -rawTurn;
+
+#if LAB_ENABLE_DUAL_PROFILE
+                if ((gimbalLineControl != 0U) && (baseTarget > 0)) {
+                    /* Curvature mixer for the heavy platform.  Below the
+                     * budget the PD command is untouched.  Above it, only
+                     * the excess is compressed smoothly toward 55% of the
+                     * common speed.  This preserves forward motion and
+                     * steering authority without the 277/29 mm/s rail split
+                     * that makes the high-side wheel throw the chassis back. */
+                    int32_t mixBudget = ((int32_t)baseTarget * 40L) / 100L;
+                    int32_t mixCap = ((int32_t)baseTarget * 55L) / 100L;
+
+                    if (mixBudget < 20L) mixBudget = 20L;
+                    if (mixCap <= mixBudget) mixCap = mixBudget + 1L;
+                    if (absoluteTurn > mixBudget) {
+                        int32_t excess = absoluteTurn - mixBudget;
+                        int32_t compressed = mixBudget +
+                            (((mixCap - mixBudget) * excess) /
+                             (mixBudget + excess));
+                        rawTurn = (rawTurn < 0L) ? -compressed : compressed;
+                        absoluteTurn = compressed;
+                    }
+                }
+#endif
 
                 /* Soft saturation preserves the sign and direction of the
                  * PD command while compressing only the excessive tail.  A
