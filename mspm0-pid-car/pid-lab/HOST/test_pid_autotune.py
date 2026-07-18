@@ -793,11 +793,11 @@ class CliTests(unittest.TestCase):
             "if ((gimbalLineControl != 0U) && (valid != 0U))", source
         )
         self.assertIn("outputTurn = g_lineTurnMmps;", source)
-        self.assertIn("LAB_GIMBAL_LINE_SPEED_FLOOR_MMPS    90", source)
+        self.assertIn("LAB_GIMBAL_LINE_SPEED_FLOOR_MMPS    130", source)
         self.assertIn("uint8_t gimbal_corner_present", source)
         self.assertIn("uint8_t stable_gimbal_center_line", source)
         self.assertIn("activeCount >= 4U", source)
-        self.assertIn("LAB_GIMBAL_CORNER_DETECT_CONFIRM 3U", source)
+        self.assertIn("LAB_GIMBAL_CORNER_DETECT_CONFIRM 2U", source)
         self.assertIn("g_gimbalStartupSeedMmps", source)
         self.assertIn(
             "g_leftPwm = calculate_pi_pwm(&g_leftPi, g_leftTarget, leftSpeed);",

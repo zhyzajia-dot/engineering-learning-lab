@@ -116,21 +116,21 @@
 /* 重云台的直线控制由灰度单独掌权。误差越大，连续增加差速权限和变化率，
  * 同时降低公共速度；不再用 RECOVER 子状态、IMU 航向或 GSTART 制造额外轮差。 */
 #define LAB_GIMBAL_LOW_SPEED_GUARD_MAX_MMPS 200
-#define LAB_GIMBAL_LINE_MIN_TURN_LIMIT_MMPS 35
-#define LAB_GIMBAL_LINE_MAX_TURN_LIMIT_MMPS 100
-#define LAB_GIMBAL_LINE_LIMIT_PER_ERROR_MMPS 2
-#define LAB_GIMBAL_LINE_MIN_SLEW_MMPS       12
-#define LAB_GIMBAL_LINE_MAX_SLEW_MMPS       24
-#define LAB_GIMBAL_LINE_SPEED_FLOOR_MMPS    90
-#define LAB_GIMBAL_LINE_SPEED_DROP_START_ERROR 8
+#define LAB_GIMBAL_LINE_MIN_TURN_LIMIT_MMPS 80
+#define LAB_GIMBAL_LINE_MAX_TURN_LIMIT_MMPS 160
+#define LAB_GIMBAL_LINE_LIMIT_PER_ERROR_MMPS 4
+#define LAB_GIMBAL_LINE_MIN_SLEW_MMPS       20
+#define LAB_GIMBAL_LINE_MAX_SLEW_MMPS       40
+#define LAB_GIMBAL_LINE_SPEED_FLOOR_MMPS    130
+#define LAB_GIMBAL_LINE_SPEED_DROP_START_ERROR 10
 #define LAB_GIMBAL_LINE_SPEED_DROP_PER_ERROR_MMPS 2
 #define LAB_GIMBAL_GSTART_LIMIT_MMPS           35
-#define LAB_GIMBAL_EXIT_TURN_LIMIT_MMPS     25
-#define LAB_GIMBAL_EXIT_TOTAL_LIMIT_MMPS    50
-#define LAB_GIMBAL_EXIT_SPEED_MMPS          100
+#define LAB_GIMBAL_EXIT_TURN_LIMIT_MMPS     160
+#define LAB_GIMBAL_EXIT_TOTAL_LIMIT_MMPS    160
+#define LAB_GIMBAL_EXIT_SPEED_MMPS          200
 /* GIMBAL 首边不再在不可观测低速区爬 1.5 秒；1 秒仍保持线性斜坡，
  * 但更快越过约 80 mm/s 的可靠编码器区。 */
-#define LAB_GIMBAL_START_RAMP_MS            1000U
+#define LAB_GIMBAL_START_RAMP_MS             300U
 /* 重载车约 50°～70° 扫到的右外侧通常仍是正在离开的旧入边；新出边
  * 会在更后段从左侧/中心重新进入。外线不再直接等于“转弯完成”。
  * A 相编码器又无法区分正反方向，因此切换前进前必须真实停稳。 */
@@ -197,7 +197,7 @@
 /* 在“待转角”状态下，要求连续看到几次“左边大块黑” */
 #define LAB_CORNER_DETECT_CONFIRM        2U
 /* Heavy-gimbal line oscillation can briefly sweep three left sensors. */
-#define LAB_GIMBAL_CORNER_DETECT_CONFIRM 3U
+#define LAB_GIMBAL_CORNER_DETECT_CONFIRM 2U
 /* EXIT 阶段验证到中心线的次数 */
 #define LAB_TURN_CENTER_CONFIRM          3U
 /* 重云台出弯时惯性更大，黑线可能只在中心/邻中心组合上保持约
@@ -3824,7 +3824,15 @@ static void update_closed_loop(uint32_t nowMs)
         if (g_mode == LAB_MODE_SQUARE) {
             /* 方框模式额外判断：是否已经走到转角 */
             if (g_squareState == SQUARE_STATE_LINE) {
+                uint8_t cornerArmConfirm = LAB_CORNER_ARM_CONFIRM;
                 g_edgeTravelMm = square_edge_travel_mm();
+#if LAB_ENABLE_DUAL_PROFILE
+                if (g_activeProfile == LAB_PROFILE_GIMBAL) {
+                    /* Do not require eight quiet frames on the heavy
+                     * platform; V4 accepts the bend after a short arm. */
+                    cornerArmConfirm = 4U;
+                }
+#endif
 #if LAB_ENABLE_DUAL_PROFILE
                 if ((g_activeProfile == LAB_PROFILE_GIMBAL) &&
                     (IMU_IsReady() != 0U)) {
@@ -3854,8 +3862,7 @@ static void update_closed_loop(uint32_t nowMs)
                     /* 边长太短：不能被判为转角，重新累计确认计数 */
                     g_cornerArmCount = 0U;
                     g_cornerDetectCount = 0U;
-                } else if (g_cornerArmCount <
-                           LAB_CORNER_ARM_CONFIRM) {
+                } else if (g_cornerArmCount < cornerArmConfirm) {
                     /* 第一阶段：连续多次看到“线很稳居中” */
                     if (stable_center_line(g_lineMask) != 0U) {
                         g_cornerArmCount++;

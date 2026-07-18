@@ -127,14 +127,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     gimbal_auto = subparsers.add_parser(
         "gimbal-auto",
-        help="continuously autotune the GIMBAL profile at 120 mm/s",
+        help="continuously autotune the GIMBAL profile at V4-like speed",
     )
     gimbal_auto.add_argument("--port", required=True)
-    gimbal_auto.add_argument("--speed", type=int, choices=(120,), default=120)
+    gimbal_auto.add_argument(
+        "--speed", type=int, choices=(120, 160, 180), default=160
+    )
     gimbal_auto.add_argument(
         "--track-safe", action="store_true",
         help=(
-            "required acknowledgement that the car is centered on a closed "
+        "required acknowledgement that the car is centered on a closed "
             "counter-clockwise square track"
         ),
     )
