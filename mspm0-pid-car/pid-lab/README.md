@@ -12,6 +12,8 @@ For recovery, `gimbal-auto` also detects an old collapsed value below `80 mm` an
 
 The three-corner run proved that absolute IMU yaw is cumulative across track edges: after three successful `TURN CENTER` events the car still had `mask=48/error=6/line_valid=1`, while yaw crossed `-60°`. The host hard-yaw backstop therefore no longer stops on yaw alone. It requires the grayscale line to be absent as well, sustained for `15` compact samples; a valid gray line always remains under firmware PID ownership.
 
+The real course finishes at the fourth corner, so `gimbal-auto` now requests one firmware lap rather than the historical three-lap qualification run. Learning may complete after two corners, motion continues through corner four, and `SQUARE DONE` becomes the actual finish/save boundary.
+
 The design deliberately returns to the proven V4 ownership model instead of stacking independent recovery controllers:
 
 - Straight-line steering has one owner: grayscale error → PD → left/right speed targets → wheel PI/PWM. The heavy-gimbal automatic run starts at the historical champion `LINEKP=8250`, `LINEKD=2250` (the old `6750/2000` start could not reach that champion with local ±100 trials). D is active outside the small center deadband; candidates that worsen the same straight-edge score are rolled back.

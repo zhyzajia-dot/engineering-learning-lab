@@ -141,7 +141,10 @@ GIMBAL_RUNTIME_PARAMETERS = tuple(FIRMWARE_DEFAULT_PARAMETERS) + ("GSTART",)
 # Guard9 GIMBAL autotune is one continuous square session.  It uses short,
 # bounded coordinate trials on straight edges instead of spending one full lap
 # on every pair.  A parameter is changed only after a stable centered window.
-GIMBAL_AUTO_SQUARE_LAPS = 3
+# The physical course finishes after the fourth corner. One firmware lap is
+# therefore the real run boundary; the former three-lap qualification target
+# would drive past the finish after learning had already completed.
+GIMBAL_AUTO_SQUARE_LAPS = 1
 GIMBAL_AUTO_TIMEOUT_SECONDS = 240.0
 GIMBAL_BASELINE_SAMPLES = 50
 GIMBAL_TRIAL_MIN_SAMPLES = 30
