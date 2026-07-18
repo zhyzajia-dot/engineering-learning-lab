@@ -14,6 +14,8 @@ The three-corner run proved that absolute IMU yaw is cumulative across track edg
 
 The real course finishes at the fourth corner, so `gimbal-auto` now requests one firmware lap rather than the historical three-lap qualification run. Learning may complete after two corners, motion continues through corner four, and `SQUARE DONE` becomes the actual finish/save boundary.
 
+Physical validation at `2026-07-18 13:11` completed all four corners and reached `GIMBAL COMPLETE`. Captures occurred at `76/71/68/65 mm`; all four produced valid `TURN CENTER` and `TURN LEARN` events. The corrected `×4/3` learner saved `TURNDIST=93`, while the proven line pair remained `LINEKP=8250/LINEKD=2250`. Final readback was `IDLE/SAFE`, `mask=48`, `GUARDVER=25`, `PROFILE=1`.
+
 The design deliberately returns to the proven V4 ownership model instead of stacking independent recovery controllers:
 
 - Straight-line steering has one owner: grayscale error → PD → left/right speed targets → wheel PI/PWM. The heavy-gimbal automatic run starts at the historical champion `LINEKP=8250`, `LINEKD=2250` (the old `6750/2000` start could not reach that champion with local ±100 trials). D is active outside the small center deadband; candidates that worsen the same straight-edge score are rolled back.
