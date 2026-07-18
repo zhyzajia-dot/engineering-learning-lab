@@ -172,7 +172,7 @@
 #define LAB_GIMBAL_STARTUP_HEADING_STOP_X10 32767
 #define LAB_GIMBAL_LINE_HEADING_STOP_X10   32767
 #define LAB_GIMBAL_LINE_HEADING_CONFIRM      3U
-#define LAB_GIMBAL_GUARD_VERSION              24
+#define LAB_GIMBAL_GUARD_VERSION              25
 /* 灰度有效位掩码：低 7 位为有效检测位 */
 #define LAB_LINE_SENSOR_VALID_MASK   0x7FU
 
@@ -876,10 +876,13 @@ static uint8_t gimbal_corner_present(uint8_t mask)
                   sensor_bit_active(mask, 2U) +
                   sensor_bit_active(mask, 3U));
 
-    /* Real corners can enter with mask 55/62 or mask 15 (four active
-     * sensors). The straight-line false turn was mask 14 (only three), so
-     * four is the narrow lower bound for the heavy-gimbal track. */
-    return ((activeCount >= 4U) &&
+    /* Real corners can enter with mask 55/62, mask 15, or (on the later
+     * loaded track edge) the three-sensor masks 13/7. The straight-line
+     * false turn was mask 14, so only 13/7 are admitted as three-sensor
+     * candidates, and only after at least one corner has already completed. */
+    return (((activeCount >= 4U) ||
+             ((g_squareCornerCount > 0U) &&
+              ((mask == 13U) || (mask == 7U)))) &&
             (leftCount >= 3U) &&
             (sensor_bit_active(mask, 6U) == 0U)) ? 1U : 0U;
 }

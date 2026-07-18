@@ -122,14 +122,14 @@ FIRMWARE_DEFAULT_PARAMETERS = {
 
 PROFILE_IDS = {"LIGHT": 0, "GIMBAL": 1}
 
-GIMBAL_GUARD_VERSION = 24
+GIMBAL_GUARD_VERSION = 25
 # GIMBAL line PID can legitimately request nearly the full 200 mm/s envelope
 # after a corner when only an outer sensor still sees the line. Keep a margin
 # above that physical envelope so the host catches malformed telemetry, not a
 # recoverable large-error correction.
 GIMBAL_SQUARE_TARGET_DELTA_GUARD_MMPS = 260
 GIMBAL_SQUARE_TARGET_DELTA_CONFIRM = 3
-# Guard24 leaves gray-line recovery to firmware. The host keeps only a broad
+# Guard25 leaves gray-line recovery to firmware. The host keeps only a broad
 # 60-degree communication backstop so a normal heavy-platform turn is not
 # stopped at the old 25-degree threshold.
 GIMBAL_HARD_YAW_GUARD_X10 = 600
@@ -1239,7 +1239,7 @@ class AutoTuner:
                 tune_speed_mmps, GIMBAL_AUTO_SQUARE_LAPS
             )
             self._status(
-                "GIMBAL Guard24 continuous autotune started: first straight "
+                "GIMBAL Guard25 continuous autotune started: first straight "
                 f"edge is the baseline; {len(trials)} bounded single-parameter "
                 "trials will run without repositioning"
             )
@@ -1275,7 +1275,7 @@ class AutoTuner:
                         GIMBAL_REQUIRED_CENTERED_CORNERS
                     ):
                         raise RuntimeError(
-                                "square ended before Guard24 autotune validation "
+                                "square ended before Guard25 autotune validation "
                             "completed"
                         )
                     break
@@ -1624,12 +1624,12 @@ class AutoTuner:
                             break
             else:
                 raise TimeoutError(
-                    "Guard24 continuous autotune did not finish within "
+                    "Guard25 continuous autotune did not finish within "
                     f"{GIMBAL_AUTO_TIMEOUT_SECONDS:g}s"
                 )
 
             if incumbent_score is None or final_validation_score is None:
-                raise RuntimeError("Guard24 final validation was not completed")
+                raise RuntimeError("Guard25 final validation was not completed")
             if len(successful_center_corners) < (
                 GIMBAL_REQUIRED_CENTERED_CORNERS
             ):
@@ -1784,7 +1784,7 @@ class AutoTuner:
                 encoding="utf-8",
             )
             self._status(
-                "GIMBAL COMPLETE: one-session Guard24 tune saved and verified; "
+                "GIMBAL COMPLETE: one-session Guard25 tune saved and verified; "
                 f"LINEKP={incumbent['LINEKP']} "
                 f"LINEKD={incumbent['LINEKD']}, centered corners="
                 f"{len(successful_center_corners)}, result={result_path}"

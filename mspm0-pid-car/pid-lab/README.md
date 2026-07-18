@@ -1,6 +1,6 @@
-# Current handoff (2026-07-18, Guard24)
+# Current handoff (2026-07-18, Guard25)
 
-The current source and default firmware are Guard24. Guard23 completed the first corner and PID alignment, but the second corner entered as `mask=15` (four active left sensors); the GIMBAL corner detector still required five and never started the turn. Guard24 lowers that narrow detector to four active sensors while still rejecting the historical three-sensor `mask=14` false turn. The valid-edge PID handoff, slower GIMBAL pair (`TURNFAST=165`, `TURNSLOW=110`), `1/2×TURNDIST` taper, and short counter-torque remain.
+The current source and default firmware are Guard25. Guard24's second-corner run showed the actual track pattern was `mask=13` followed by `mask=7` (three left sensors), so even the four-sensor detector never started the turn. Guard25 admits only these two three-sensor masks after at least one corner has completed, while still rejecting the historical straight-line `mask=14` false turn. The valid-edge PID handoff, slower GIMBAL pair (`TURNFAST=165`, `TURNSLOW=110`), `1/2×TURNDIST` taper, and short counter-torque remain.
 
 The host-side post-corner target-differential guard is intentionally set to `260 mm/s`, above the firmware's normal `200 mm/s` GIMBAL correction envelope. A large but valid outer-sensor error is therefore handed back to grayscale PID; only malformed telemetry beyond the physical envelope is stopped by the host.
 
@@ -11,9 +11,9 @@ The design deliberately returns to the proven V4 ownership model instead of stac
 - The loaded profile now starts with V4 turn parameters `TURNFAST=185`, `TURNSLOW=140`, `TURNMARGIN=180`, `TURNEXIT=140`, `TURNDIST=98`; wheel response remains separate (`LMIN=90/RMIN=85`, `LFF=540/RFF=520`) so LIGHT is not changed.
 - IMU yaw is relative and diagnostic/safety evidence. The same mounting location as V4 does not guarantee the same Euler yaw after the high gimbal changes roll/pitch vibration and chassis motion. Logs measured a physical 90° rotation as about 68.7°, and a Guard16 turn peaked near 51° while encoder travel exceeded 290 mm. Therefore yaw cannot be the only completion authority; encoder geometry and real line return are primary.
 
-The Guard18 run is the reason for Guard19: the vehicle crossed `mask=48` at travel `75..91 mm`, but Guard18 waited until `98 mm`, then saw `mask=96/64` and stopped with `LINE NOT CAPTURED`. Guard19 moved capture back into the V4-style sweep. Guard20/21 reduced turn speed and coast; Guard22/23 proved the capture and PID handoff; Guard23's second-corner `mask=15` detector miss is the sole Guard24 change.
+The Guard18 run is the reason for Guard19: the vehicle crossed `mask=48` at travel `75..91 mm`, but Guard18 waited until `98 mm`, then saw `mask=96/64` and stopped with `LINE NOT CAPTURED`. Guard19 moved capture back into the V4-style sweep. Guard20/21 reduced turn speed and coast; Guard22/23 proved the capture and PID handoff; Guard24's second-corner `mask=13/7` detector miss is the sole Guard25 change.
 
-Current HEX: 110,056 bytes, SHA-256 `C262648E064B56312F3ACF395A199ECD604E5A1567157F0753BCA0E91B4DA2B6` (run `Get-FileHash -Algorithm SHA256 .\Debug\pid_lab_mspm0.hex` before flashing).
+Current HEX: 110,133 bytes, SHA-256 `0FAF7ABC9EB3EC6119DEFA887DE3C135C0B89B7E56E8330CB46172016FF102D4` (run `Get-FileHash -Algorithm SHA256 .\Debug\pid_lab_mspm0.hex` before flashing).
 
 ## Guard19 换电脑交接与烧录注意事项
 

@@ -491,7 +491,7 @@ def run_gimbal_auto(
     statuses: queue.Queue[str],
     args: argparse.Namespace,
 ) -> bool:
-    """Run Guard24 line/turn learning in one continuous square session."""
+    """Run Guard25 line/turn learning in one continuous square session."""
     original: dict[str, int] | None = None
     worker_started = False
     try:
@@ -513,7 +513,7 @@ def run_gimbal_auto(
                 f"Invalid learned GSTART readback: {learned_gstart}"
             )
 
-        # All preparation is RAM-only.  Guard24 performs the sole Flash SAVE
+        # All preparation is RAM-only.  Guard25 performs the sole Flash SAVE
         # only after four valid centered corners and final straight validation.
         stage_parameters = {
             **GIMBAL_LOAD_WHEEL_PARAMETERS,
@@ -569,7 +569,7 @@ def run_gimbal_auto(
             f"GUARDVER={bootstrap['GUARDVER']}"
         )
         print(
-            "GIMBAL AUTO Guard24: no fixed qualification lap. The first "
+            "GIMBAL AUTO Guard25: no fixed qualification lap. The first "
             "straight edge is scored immediately; bounded LINEKP/LINEKD "
             "coordinate trials switch one parameter at a time only on stable "
             "centered windows. Clearly worse trials roll back in RAM. "
