@@ -1630,6 +1630,7 @@ class CliTests(unittest.TestCase):
             link.data_queue.put("TURN CENTER,4,900,123,24,7")
             link.data_queue.put("TURN CENTER,2,900,124,48,6")
             link.data_queue.put(centered(start + 80, 2))
+            link.data_queue.put("SQUARE DONE,1")
             link.data_queue.put("TURN CENTER,3,900,125,24,0")
             link.data_queue.put("TURN CENTER,4,900,126,48,6")
             link.data_queue.put(centered(start + 100, 2))

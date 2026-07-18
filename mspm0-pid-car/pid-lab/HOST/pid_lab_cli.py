@@ -574,9 +574,10 @@ def run_gimbal_auto(
             "coordinate trials switch one parameter at a time only on stable "
             "centered windows. Clearly worse trials roll back in RAM. "
             "TURN CAPTURE/CENTER/LEARN (and optional SEARCH) are tracked; "
-            "Flash SAVE occurs after two valid centered corners and a "
-            "line-safe handoff; a late score fluctuation cannot stop the "
-            "car while a sensor still sees the line."
+            "Two valid centered corners are enough to learn turn geometry; "
+            "the car continues until firmware emits SQUARE DONE. Flash SAVE "
+            "then commits the incumbent, and a late score fluctuation cannot "
+            "stop the car while a sensor still sees the line."
         )
         previous_worker = tuner.thread
         tuner.start_gimbal_auto(args.speed, original)

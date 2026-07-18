@@ -4,7 +4,7 @@ The current source and default firmware are Guard25. Guard24's second-corner run
 
 The host-side post-corner target-differential guard is intentionally set to `260 mm/s`, above the firmware's normal `200 mm/s` GIMBAL correction envelope. A large but valid outer-sensor error is therefore handed back to grayscale PID; only malformed telemetry beyond the physical envelope is stopped by the host.
 
-Guard25 host completion no longer treats a late score fluctuation as a line-loss fault. After two valid centered corners, the incumbent PID is kept and turn geometry is learned; a validation window that is temporarily worse is reported and the vehicle continues under firmware grayscale PID while a sensor still sees the line. Emergency stops for serial loss, IMU faults, and a genuinely lost line remain enabled.
+Guard25 host completion no longer treats a late score fluctuation as a line-loss fault or ends the run after the second corner. After two valid centered corners, the incumbent PID is kept and turn geometry is learned; the vehicle continues under firmware grayscale PID until the firmware emits `SQUARE DONE`. A temporarily worse validation window is reported, while emergency stops for serial loss, IMU faults, and a genuinely lost line remain enabled.
 
 The design deliberately returns to the proven V4 ownership model instead of stacking independent recovery controllers:
 

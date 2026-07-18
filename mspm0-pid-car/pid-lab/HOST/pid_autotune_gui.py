@@ -1273,15 +1273,15 @@ class AutoTuner:
                 if line.startswith(("SQUARE ERROR", "ERR SQUARE")):
                     raise RuntimeError(line)
                 if line.startswith("SQUARE DONE"):
-                    if not (
-                        final_validation_score is not None and
-                        len(successful_center_corners) >=
+                    if len(successful_center_corners) < (
                         GIMBAL_REQUIRED_CENTERED_CORNERS
                     ):
                         raise RuntimeError(
-                                "square ended before Guard25 autotune validation "
-                            "completed"
+                            "square ended before two valid TURN CENTER "
+                            "events were observed"
                         )
+                    if final_validation_score is None:
+                        final_validation_score = incumbent_score
                     break
 
                 turn_event = parse_turn_event(line)
@@ -1628,18 +1628,10 @@ class AutoTuner:
                             )
                             final_validation_score = incumbent_score
 
-                    # Completion is based on a valid line and the minimum
-                    # learned corner count, not on an arbitrary validation
-                    # score.  This prevents a still-visible sensor (for
-                    # example sensor 2) from being turned into a host STOP.
-                    if (
-                        len(successful_center_corners) >=
-                        GIMBAL_REQUIRED_CENTERED_CORNERS and
-                        center_streak >= LINE_SWITCH_CENTER_SAMPLES
-                    ):
-                        if final_validation_score is None:
-                            final_validation_score = incumbent_score
-                        break
+                    # Do not stop when the minimum learning count is reached.
+                    # The firmware owns the track lifetime and will emit
+                    # SQUARE DONE at the configured lap boundary. This lets
+                    # a visible outer sensor continue through later corners.
             else:
                 raise TimeoutError(
                     "Guard25 continuous autotune did not finish within "
@@ -1647,7 +1639,7 @@ class AutoTuner:
                 )
 
             if incumbent_score is None or final_validation_score is None:
-                raise RuntimeError("Guard25 final validation was not completed")
+                raise RuntimeError("Guard25 baseline was not completed")
             if len(successful_center_corners) < (
                 GIMBAL_REQUIRED_CENTERED_CORNERS
             ):
