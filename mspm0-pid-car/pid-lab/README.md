@@ -1,4 +1,32 @@
-# Current handoff (2026-07-19, Guard37)
+# Current handoff (2026-07-19, Guard40)
+
+## 2026-07-19 实车结论与下一步
+
+当前版本还没有达到 V4 的高速稳定循迹目标。Guard40 已完成编译和主机回归测试，但实车只完成了低速失败复现，不能称为最终版本。
+
+已确认的事实：
+
+- Guard37 在 180 mm/s、`LINEKP=8250/LINEKD=2350` 下完成前两个弯，第三条直边在 `error=+36/-36` 间形成极限环，目标轮速一度达到 `229/95 mm/s`，随后丢线。证据目录：`HOST/logs/gimbal_auto_full_lap_20260719_142003`。
+- Guard38 在 160 mm/s 下仍于第三条边丢线；失败候选的部分遥测已保存到 `HOST/logs/gimbal_auto_full_lap_20260719_143705/line_lap_kp8250_kd2350_1_partial.csv`。
+- Guard39/Guard40 的 120 mm/s 固定参数测试能够真实启动，但第一条直边约 2.2 秒后 `SQUARE ERROR,LINE LOST`。实测曾出现目标 `150/90 mm/s`、实际 `57/127 mm/s`，也出现目标 `117/63 mm/s`、实际 `116/69 mm/s`；说明电机并非完全没有重载速度能力，主要矛盾是左右轮瞬态不一致、目标下降后制动迟缓，以及外层灰度差速建立在尚未重新辨识的重载轮速内环上。
+- GIMBAL 当前只提高了 `LMIN/RMIN/LFF/RFF`，轮速 `LKP/LKI/RKP/RKI` 仍沿用轻载 V4 参数。继续单独增大 `LINEKP/LINEKD` 只会扩大左右目标差，不能修好轮速跟随。
+- 现场 USB/ESP8266 桥随后出现间歇丢帧：CH340 端口从 COM25 重新枚举到 COM10、COM24，`HELLO/STATUS/IMU/PARAM/SET` 会随机缺失或返回 `ERR COMMAND`。后续运动测试必须等一整套 `diagnose` 连续通过后再开始；不要在只收到单帧 `STATUS` 时发车。
+
+Guard40 相对 Guard39 的改动：
+
+- 大幅降低轮速目标（单次至少 20 mm/s）时，在下一次 PI 更新前释放 25% 的历史积分，减少重车把直线推力带进转弯/出弯；停车和模式切换同时清除目标历史。
+- 保留 Guard39 的远端误差公共速度降至请求速度 75%、低速请求不被固定 130 mm/s 地板反向抬高，以及仅在误差继续向外发展时启用远端混合器。
+- 上位机在完整候选失败时保存部分 CSV；STOP 短 ACK 丢失时，只允许用明确的 `IDLE + 六个零输出字段 + SAFE` 状态作为安全兜底。
+
+下一步必须先做“云台最终装配、车轮落地、实际电池状态”的左右轮直线阶跃辨识，再恢复整圈自动调参：
+
+1. 修复或绕过不稳定的 ESP8266/CH340 桥，连续确认 `HELLO/STATUS/SENSOR/IMU/POWER/PARAM` 全部通过，且 `GUARDVER=40`、`IDLE/SAFE`。
+2. 分别测试 80、120、160 mm/s，记录左右目标、实际轮速和 PWM，重新确定 `LMIN/RMIN/LFF/RFF/LKP/LKI/RKP/RKI`。
+3. 120 mm/s 的验收目标是稳态实际速度在 110～125 mm/s、左右差不超过 10～15 mm/s、120→80 mm/s 后约 200 ms 内降至 90 mm/s 以下，并且 PWM 不长期顶到 500。
+4. 若 PWM 未接近上限而速度偏低，继续调整轮速 PI/前馈；若 PWM 已长期接近 500 仍达不到目标，则检查电池压降、TB6612、电机/齿轮阻力、轮胎和云台质量/重心，软件无法补出缺失的扭矩。
+5. 轮速内环通过后，再用完整四边评分恢复 `gimbal-auto` 的 `LINEKP/LINEKD` 搜索，并依次验证 120、160、180、250 mm/s。
+
+当前固件为 `Debug/pid_lab_mspm0.hex`，114,246 bytes，SHA-256 `4B987FCB4442D2A00AA65C39F6362609D9EE2DCFF47035E7B23BDC9662926715`；不可变归档为 `Debug/pid_lab_mspm0_guard40_target_drop_bleed_20260719.hex`。LIGHT/V4 冻结固件没有改变。
 
 ## 当前行动版：V4 式完整一圈自动调参
 
@@ -6,7 +34,7 @@
 
 会话开始时会把旧的 `TURNDIST<98`（例如把 `TURN CAPTURE` 的 3/4 距离误存成 93）恢复为 V4 的完整转弯基准 `98 mm`。固件的 `TURN CAPTURE/CENTER/LEARN` 继续用于在线观察转弯几何；失真的绝对陀螺仪角度不作为唯一转弯完成条件。最近的固定参数验证发生在第一弯出弯后的同一条直线上振荡，日志中没有第二次 `TURN CAPTURE`，所以问题不是“第二弯识别到了却被限制停下”。
 
-The current source and default firmware are Guard25. Guard24's second-corner run showed the actual track pattern was `mask=13` followed by `mask=7` (three left sensors), so even the four-sensor detector never started the turn. Guard25 admits only these two three-sensor masks after at least one corner has completed, while still rejecting the historical straight-line `mask=14` false turn. The valid-edge PID handoff, slower GIMBAL pair (`TURNFAST=165`, `TURNSLOW=110`), `1/2×TURNDIST` taper, and short counter-torque remain.
+The current source and default firmware are Guard40. It retains Guard39's far-error common-speed reduction and adds wheel-loop target-drop integral bleed: when a corner removes at least 20 mm/s from a wheel target, 25% of the stored integral is released before the next PI update. This prevents the heavy chassis from carrying straight-line drive into braking. The slower GIMBAL pair (`TURNFAST=165`, `TURNSLOW=110`), `1/2×TURNDIST` taper, and short counter-torque remain.
 
 The host-side post-corner target-differential guard is intentionally set to `260 mm/s`, above the firmware's normal `200 mm/s` GIMBAL correction envelope. A large but valid outer-sensor error is therefore handed back to grayscale PID; only malformed telemetry beyond the physical envelope is stopped by the host.
 
@@ -31,7 +59,9 @@ The design deliberately returns to the proven V4 ownership model instead of stac
 
 The Guard18 run is the reason for Guard19: the vehicle crossed `mask=48` at travel `75..91 mm`, but Guard18 waited until `98 mm`, then saw `mask=96/64` and stopped with `LINE NOT CAPTURED`. Guard19 moved capture back into the V4-style sweep. Guard20/21 reduced turn speed and coast; Guard22/23 proved the capture and PID handoff; Guard24's second-corner `mask=13/7` detector miss is the sole Guard25 change.
 
-Current HEX: 113,922 bytes, SHA-256 `8EC8207E60EC9128053D7E92ABB40C5DD9C8E798F6846F98763E03EAA7B12C96` (run `Get-FileHash -Algorithm SHA256 .\Debug\pid_lab_mspm0.hex` before flashing). This build keeps the proven adaptive common-speed scheduler, raises its valid-line floor to 90% of the request, and makes recovery toward the requested speed twice as fast; V4-style trend-adaptive P/D, filtered IMU yaw-rate damping, and actual line-loss braking remain active.
+Current HEX: 114,246 bytes, SHA-256 `4B987FCB4442D2A00AA65C39F6362609D9EE2DCFF47035E7B23BDC9662926715` (run `Get-FileHash -Algorithm SHA256 .\Debug\pid_lab_mspm0.hex` before flashing). Guard40 also saves partial candidate telemetry when a full-lap candidate loses the line, so a failed search remains diagnosable. Immutable copy: `Debug/pid_lab_mspm0_guard40_target_drop_bleed_20260719.hex`.
+
+现场 Guard37 实测 `HOST/logs/gimbal_auto_full_lap_20260719_142003`：180 mm/s、`LINEKP=8250/LINEKD=2350` 尚未切换挑战者就丢线。前两个弯分别产生有效 `TURN CENTER`，第三条直边误差在 `+36/-36` 间持续摆动，目标一度为 `229/95 mm/s`，最终 `SQUARE ERROR,LINE LOST`。这不是候选切换导致的失败；Guard38 的第一项验证必须确认该固定基线是否消除这一低频极限环。
 
 ## 换电脑交接（2026-07-19）
 
@@ -49,7 +79,7 @@ Current HEX: 113,922 bytes, SHA-256 `8EC8207E60EC9128053D7E92ABB40C5DD9C8E798F68
 
 ### 固件和参数注意事项
 
-- 当前 Guard37 的 HEX 必须重新烧录；普通烧录不一定覆盖 Flash 中已有的运行参数。GIMBAL 自动任务会先加载 `LINEKP=8250/LINEKD=2350` 和重载轮速参数，再开始候选比较。
+- 当前 Guard40 的 HEX 必须重新烧录；普通烧录不一定覆盖 Flash 中已有的运行参数。GIMBAL 自动任务会先加载 `LINEKP=8250/LINEKD=2350` 和重载轮速参数，再开始候选比较。
 - 不要把 LIGHT 参数保存到 GIMBAL，也不要在车辆落地时做悬空轮自动调参；轮速 PI/前馈必须在实际负载和实际电池状态下验证。
 - 绝对 IMU yaw 有比例误差，不能拿 90°读数直接当真实角度。当前转弯主要依据灰度捕线和编码器里程；IMU 角速度只用于抑制车体旋转，不是唯一转弯完成条件。
 - 自动调参失败会发送 `STOP` 并恢复任务前的 GIMBAL RAM 参数，不会保存失败候选。任何串口断开、灰度持续无效或电源异常，都应立即断电检查。

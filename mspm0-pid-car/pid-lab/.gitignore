@@ -1,6 +1,9 @@
 !Debug/
 Debug/*
 !Debug/pid_lab_mspm0.hex
+!Debug/pid_lab_mspm0_guard38_far_mix_fix_20260719.hex
+!Debug/pid_lab_mspm0_guard39_far_speed_floor_20260719.hex
+!Debug/pid_lab_mspm0_guard40_target_drop_bleed_20260719.hex
 !Debug/pid_lab_mspm0_guard9_signed_turngate_20260717.hex
 !Debug/pid_lab_mspm0_guard9_lineenvelope_20260717.hex
 !Debug/pid_lab_mspm0_guard9_firstedge100_20260717.hex

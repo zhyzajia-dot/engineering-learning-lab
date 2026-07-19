@@ -1,0 +1,1 @@
+GIMBAL FAILED: SQUARE ERROR,LINE LOST; original GIMBAL parameters restored

@@ -183,7 +183,8 @@
 #define LAB_GIMBAL_STARTUP_HEADING_STOP_X10 32767
 #define LAB_GIMBAL_LINE_HEADING_STOP_X10   32767
 #define LAB_GIMBAL_LINE_HEADING_CONFIRM      3U
-#define LAB_GIMBAL_GUARD_VERSION              25
+#define LAB_GIMBAL_GUARD_VERSION              40
+#define LAB_WHEEL_TARGET_DROP_BLEED_MMPS      20
 /* 灰度有效位掩码：低 7 位为有效检测位 */
 #define LAB_LINE_SENSOR_VALID_MASK   0x7FU
 
@@ -299,6 +300,7 @@ typedef struct {
     int32_t ffX1000;        /* 前馈增益 FF（x1000 缩放） */
     int16_t minPwm;         /* 最小启动 PWM */
     int32_t integralErrMs;  /* 积分累加值（误差 * 周期） */
+    int16_t previousTarget;
 } WheelPi_t;
 
 /* 烧写到 Flash 的全部可调参数 */
@@ -1387,6 +1389,8 @@ static void reset_pi_state(void)
     /* 切换模式或修改 PI 参数时调用，清掉积分累加避免跳变 */
     g_leftPi.integralErrMs = 0;
     g_rightPi.integralErrMs = 0;
+    g_leftPi.previousTarget = 0;
+    g_rightPi.previousTarget = 0;
 }
 
 #if LAB_ENABLE_DUAL_PROFILE
@@ -1483,8 +1487,17 @@ static int16_t calculate_pi_pwm(WheelPi_t *pi, int16_t target,
     if (target <= 0) {
         /* 目标速度非正：当作“停转”，并清积分 */
         pi->integralErrMs = 0;
+        pi->previousTarget = 0;
         return 0;
     }
+
+    /* Release stored drive when a corner removes a large part of the target.
+     * Small changes are ignored to avoid adding noise near the line. */
+    if ((pi->previousTarget - target) >=
+        LAB_WHEEL_TARGET_DROP_BLEED_MMPS) {
+        pi->integralErrMs = (pi->integralErrMs * 3L) / 4L;
+    }
+    pi->previousTarget = target;
 
     error = (int32_t)target - measured;
     /* 把误差按控制周期累加成“误差毫秒”并做钳制 */
@@ -4058,10 +4071,24 @@ static void update_closed_loop(uint32_t nowMs)
                     }
 #if LAB_ENABLE_DUAL_PROFILE
                     if (gimbalLineControl != 0U) {
-                        int16_t requestedFloor =
-                            (int16_t)(((int32_t)g_testSpeed * 90L) / 100L);
-                        if (speedFloor < requestedFloor) {
+                        /* Near the line, retain V4-like common speed.  Once
+                         * the filtered error is in the far band, the heavy
+                         * chassis needs real forward-speed headroom to turn;
+                         * a 90% floor left it oscillating at 229/95 mm/s.
+                         * Never let the heavy-profile floor exceed the
+                         * requested speed (120 mm/s used to be raised to
+                         * the fixed 130 mm/s floor). */
+                        int32_t floorPct =
+                            (absoluteError >= LAB_LINE_FAR_ERROR) ?
+                            75L : 90L;
+                        int16_t requestedFloor = (int16_t)(
+                            ((int32_t)g_testSpeed * floorPct) / 100L);
+                        if (absoluteError >= LAB_LINE_FAR_ERROR &&
+                            speedFloor > requestedFloor) {
                             speedFloor = requestedFloor;
+                        }
+                        if (speedFloor > g_testSpeed) {
+                            speedFloor = g_testSpeed;
                         }
                     }
 #endif
@@ -4234,7 +4261,7 @@ static void update_closed_loop(uint32_t nowMs)
                      * to the quiet common-mode mix. */
                     if ((absoluteError >= LAB_LINE_FAR_ERROR) &&
                         (((int32_t)effectiveError *
-                          (int32_t)errorDelta) >= 0L)) {
+                          (int32_t)errorDelta) > 0L)) {
                         budgetPct = LAB_GIMBAL_LINE_FAR_MIX_BUDGET_PCT;
                         capPct = LAB_GIMBAL_LINE_FAR_MIX_CAP_PCT;
                     }

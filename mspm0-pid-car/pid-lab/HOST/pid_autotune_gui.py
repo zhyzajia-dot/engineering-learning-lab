@@ -122,14 +122,14 @@ FIRMWARE_DEFAULT_PARAMETERS = {
 
 PROFILE_IDS = {"LIGHT": 0, "GIMBAL": 1}
 
-GIMBAL_GUARD_VERSION = 25
+GIMBAL_GUARD_VERSION = 40
 # GIMBAL line PID can legitimately request nearly the full 200 mm/s envelope
 # after a corner when only an outer sensor still sees the line. Keep a margin
 # above that physical envelope so the host catches malformed telemetry, not a
 # recoverable large-error correction.
 GIMBAL_SQUARE_TARGET_DELTA_GUARD_MMPS = 260
 GIMBAL_SQUARE_TARGET_DELTA_CONFIRM = 3
-# Guard25 leaves gray-line recovery to firmware. The host keeps only a broad
+# Guard40 leaves gray-line recovery to firmware. The host keeps only a broad
 # 60-degree communication backstop so a normal heavy-platform turn is not
 # stopped at the old 25-degree threshold.
 GIMBAL_HARD_YAW_GUARD_X10 = 600
@@ -757,7 +757,7 @@ class AutoTuner:
     ) -> None:
         """Start the V4-style full-lap GIMBAL line autotune.
 
-        The old Guard25 worker changed LINEKP/LINEKD inside a single lap and
+        The old pre-Guard40 worker changed LINEKP/LINEKD inside a single lap and
         scored short straight windows.  That made a temporary post-corner
         oscillation look like a good candidate.  GIMBAL now uses the same
         complete-four-edge A/B engine as the V4 line tuner; the argument is
@@ -947,8 +947,28 @@ class AutoTuner:
         reply = self._request_with_retry(
             "STOP", lambda item: item == "OK STOP", "STOP", retries=4
         )
-        if reply != "OK STOP":
-            raise RuntimeError("MCU did not confirm the safe STOP state")
+        if reply == "OK STOP":
+            return
+
+        # The bridge can drop the short ACK while the MCU still executes the
+        # idempotent STOP. Accept only an explicit zero-output IDLE/SAFE
+        # STATUS as a fallback; any nonzero target, speed, or PWM remains a
+        # hard failure.
+        status = self._request_with_retry(
+            "STATUS",
+            lambda item: item.startswith("STATUS,"),
+            "STOP safety STATUS",
+        )
+        if status is not None:
+            fields = status.split(",")
+            if (
+                len(fields) >= 10 and
+                fields[2] == "IDLE" and
+                all(value == "0" for value in fields[3:9]) and
+                fields[9] == "SAFE"
+            ):
+                return
+        raise RuntimeError("MCU did not confirm the safe STOP state")
 
     def _verify_motor_driver(self) -> None:
         """Verify that firmware commands the TB6612 STBY output high."""
@@ -1245,7 +1265,7 @@ class AutoTuner:
                 tune_speed_mmps, GIMBAL_AUTO_SQUARE_LAPS
             )
             self._status(
-                "GIMBAL Guard25 continuous autotune started: first straight "
+                "GIMBAL Guard40 continuous autotune started: first straight "
                 f"edge is the baseline; {len(trials)} bounded single-parameter "
                 "trials will run without repositioning"
             )
@@ -1639,12 +1659,12 @@ class AutoTuner:
                     # a visible outer sensor continue through later corners.
             else:
                 raise TimeoutError(
-                    "Guard25 continuous autotune did not finish within "
+                    "Guard40 continuous autotune did not finish within "
                     f"{GIMBAL_AUTO_TIMEOUT_SECONDS:g}s"
                 )
 
             if incumbent_score is None or final_validation_score is None:
-                raise RuntimeError("Guard25 baseline was not completed")
+                raise RuntimeError("Guard40 baseline was not completed")
             if len(successful_center_corners) < (
                 GIMBAL_REQUIRED_CENTERED_CORNERS
             ):
@@ -1805,7 +1825,7 @@ class AutoTuner:
                 encoding="utf-8",
             )
             self._status(
-                "GIMBAL COMPLETE: one-session Guard25 tune saved and verified; "
+                "GIMBAL COMPLETE: one-session Guard40 tune saved and verified; "
                 f"LINEKP={incumbent['LINEKP']} "
                 f"LINEKD={incumbent['LINEKD']}, centered corners="
                 f"{len(successful_center_corners)}, result={result_path}"
@@ -2131,37 +2151,44 @@ class AutoTuner:
         )
         settle_samples = 10
         completed_lap = False
-        while time.monotonic() < deadline:
-            self._check_cancelled()
-            try:
-                line = self.link.data_queue.get(timeout=0.1)
-            except queue.Empty:
-                continue
-            if line.startswith("SQUARE ERROR"):
-                raise RuntimeError(line)
-            if line.startswith("SQUARE DONE"):
-                raise RuntimeError("square ended before autotune completed")
-            sample = PidSample.parse(line)
-            if sample is None or sample.mode != "SQUARE":
-                continue
-            self._check_gimbal_square_guard(sample)
-            if sample.corner_count >= target_corner:
-                completed_lap = True
-                break
-            if sample.square_state != 0 or sample.time_ms < 500:
-                continue
-            if settle_samples > 0:
-                # 参数切换后跳过前 10 个样本，让输出进入稳态
-                settle_samples -= 1
-                continue
-            samples.append(sample)
-            edge_index = sample.corner_count - start_corner
-            if edge_index in edge_counts:
-                edge_counts[edge_index] += 1
-            if max(abs(sample.left_speed), abs(sample.right_speed)) > 1000:
-                # 异常速度：主动停机并报错
-                self.link.send("STOP")
-                raise RuntimeError("Unsafe encoder speed detected")
+        try:
+            while time.monotonic() < deadline:
+                self._check_cancelled()
+                try:
+                    line = self.link.data_queue.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+                if line.startswith("SQUARE ERROR"):
+                    raise RuntimeError(line)
+                if line.startswith("SQUARE DONE"):
+                    raise RuntimeError("square ended before autotune completed")
+                sample = PidSample.parse(line)
+                if sample is None or sample.mode != "SQUARE":
+                    continue
+                self._check_gimbal_square_guard(sample)
+                if sample.corner_count >= target_corner:
+                    completed_lap = True
+                    break
+                if sample.square_state != 0 or sample.time_ms < 500:
+                    continue
+                if settle_samples > 0:
+                    # 参数切换后跳过前 10 个样本，让输出进入稳态
+                    settle_samples -= 1
+                    continue
+                samples.append(sample)
+                edge_index = sample.corner_count - start_corner
+                if edge_index in edge_counts:
+                    edge_counts[edge_index] += 1
+                if max(abs(sample.left_speed), abs(sample.right_speed)) > 1000:
+                    # 异常速度：主动停机并报错
+                    self.link.send("STOP")
+                    raise RuntimeError("Unsafe encoder speed detected")
+        except Exception:
+            # 丢线候选通常在完成一圈前失败；保留已采集的部分波形，
+            # 否则自动调参只能知道“失败”，却看不到哪一条边开始发散。
+            if samples:
+                self._save_samples(f"line_{name}_partial.csv", samples)
+            raise
 
         if not completed_lap:
             raise RuntimeError(

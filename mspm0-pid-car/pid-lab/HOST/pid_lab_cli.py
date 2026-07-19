@@ -498,7 +498,7 @@ def run_gimbal_auto(
     statuses: queue.Queue[str],
     args: argparse.Namespace,
 ) -> bool:
-    """Run Guard25 line/turn learning in one continuous square session."""
+    """Run Guard40 line/turn learning in one continuous square session."""
     original: dict[str, int] | None = None
     worker_started = False
     try:
@@ -520,7 +520,7 @@ def run_gimbal_auto(
                 f"Invalid learned GSTART readback: {learned_gstart}"
             )
 
-        # All preparation is RAM-only. Guard25 performs the sole Flash SAVE
+        # All preparation is RAM-only. Guard40 performs the sole Flash SAVE
         # after two valid centered corners and a line-safe handoff.
         stage_parameters = {
             **GIMBAL_LOAD_WHEEL_PARAMETERS,
@@ -583,7 +583,7 @@ def run_gimbal_auto(
             f"GUARDVER={bootstrap['GUARDVER']}"
         )
         print(
-            "GIMBAL AUTO Guard25/V4: each LINEKP/LINEKD candidate must "
+            "GIMBAL AUTO Guard40/V4: each LINEKP/LINEKD candidate must "
             "complete a full four-edge counter-clockwise lap. Scores include "
             "post-turn recovery, ripple, overshoot, reversals and line loss; "
             "the incumbent and challenger are alternated for repeatability. "
