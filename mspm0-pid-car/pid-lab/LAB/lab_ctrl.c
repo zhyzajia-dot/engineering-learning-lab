@@ -125,6 +125,10 @@
 #define LAB_GIMBAL_LINE_SPEED_DROP_START_ERROR 10
 #define LAB_GIMBAL_LINE_SPEED_DROP_PER_ERROR_MMPS 2
 #define LAB_GIMBAL_WHEEL_DAMP_X1000        450
+#define LAB_GIMBAL_LINE_MIX_BUDGET_PCT       12
+#define LAB_GIMBAL_LINE_MIX_CAP_PCT          32
+#define LAB_GIMBAL_LINE_BASE_DECEL_MMPS      10
+#define LAB_GIMBAL_LINE_BASE_ACCEL_MMPS       5
 #define LAB_GIMBAL_GSTART_LIMIT_MMPS           35
 #define LAB_GIMBAL_EXIT_TURN_LIMIT_MMPS     160
 #define LAB_GIMBAL_EXIT_TOTAL_LIMIT_MMPS    160
@@ -450,10 +454,16 @@ static int32_t g_lineKdX1000 = LAB_DEFAULT_LINE_KD_X1000;
 /* 当前 / 上一次的循迹误差（加权后的中心偏差） */
 static int16_t g_lineError = 0;
 static int16_t g_linePreviousError = 0;
+/* Filtered line position in 1/8 sensor-error units; P must not follow a
+ * quantized seven-sensor mask instantaneously on the heavy chassis. */
+static int32_t g_lineFilteredErrorX8 = 0;
+static uint8_t g_lineFilterReady = 0U;
 /* 灰度误差的一阶差分低通状态，抑制离散 mask 跳变造成的 D 项尖峰。 */
 static int16_t g_lineFilteredDelta = 0;
 /* 循迹外环输出的左右速度修正（mm/s） */
 static int16_t g_lineTurnMmps = 0;
+/* Smoothed common forward-speed reference for heavy-gimbal curvature control. */
+static int16_t g_lineBaseMmps = 0;
 /* 失去线的累计时间（ms） */
 static uint16_t g_lineLostMs = 0U;
 /* 最近一次循迹误差是否有效 */
@@ -2154,8 +2164,11 @@ static void start_closed_test(LabMode_t mode, int16_t speed,
     g_captureLog = captureLog;
     g_lineError = 0;
     g_linePreviousError = 0;
+    g_lineFilteredErrorX8 = 0;
+    g_lineFilterReady = 0U;
     g_lineFilteredDelta = 0;
     g_lineTurnMmps = 0;
+    g_lineBaseMmps = 0;
     g_lineLostMs = 0U;
     g_lineValid = 0U;
     g_lineMask = 0U;
@@ -2234,8 +2247,11 @@ static uint8_t start_square_test(int16_t speed, uint8_t laps,
     g_cornerMinEdgeMm = LAB_EDGE_MIN_INITIAL_MM;
     g_lineError = 0;
     g_linePreviousError = 0;
+    g_lineFilteredErrorX8 = 0;
+    g_lineFilterReady = 0U;
     g_lineFilteredDelta = 0;
     g_lineTurnMmps = 0;
+    g_lineBaseMmps = 0;
     g_lineLostMs = 0U;
 #if LAB_ENABLE_DUAL_PROFILE
     g_gimbalSavedLeftIntegralErrMs = 0;
@@ -2436,7 +2452,10 @@ static uint8_t square_complete_corner(uint32_t nowMs)
     if (g_activeProfile == LAB_PROFILE_GIMBAL) {
         /* 不能把 EXIT 中的强纠偏带到下一条直边。 */
         g_lineTurnMmps = 0;
+        g_lineFilteredErrorX8 = 0;
+        g_lineFilterReady = 0U;
         g_lineFilteredDelta = 0;
+        g_lineBaseMmps = 0;
         g_gimbalLineHeadingGuardCount = 0U;
         if (IMU_IsReady() != 0U) {
             IMU_BeginRelativeYaw();
@@ -2512,7 +2531,9 @@ static uint8_t set_parameter(const char *name, int32_t value)
 #if LAB_ENABLE_DUAL_PROFILE
         if (g_activeProfile == LAB_PROFILE_GIMBAL) {
             g_lineTurnMmps = 0;
+            g_lineFilterReady = 0U;
             g_lineFilteredDelta = 0;
+            g_lineBaseMmps = 0;
             g_linePreviousError = g_lineError;
             /* 在线循迹 A/B 只更换外环，不能把已经托住重载车的轮速 PI
              * 积分清空，否则每个候选切换都会重新制造一次启动横摆。 */
@@ -2525,7 +2546,9 @@ static uint8_t set_parameter(const char *name, int32_t value)
 #if LAB_ENABLE_DUAL_PROFILE
         if (g_activeProfile == LAB_PROFILE_GIMBAL) {
             g_lineTurnMmps = 0;
+            g_lineFilterReady = 0U;
             g_lineFilteredDelta = 0;
+            g_lineBaseMmps = 0;
             g_linePreviousError = g_lineError;
             resetWheelPi = 0U;
         }
@@ -3531,7 +3554,10 @@ static uint8_t square_service_turn(uint32_t nowMs)
         g_squareState = SQUARE_STATE_CAPTURE_BRAKE;
         g_squareStateStartMs = nowMs;
         g_lineTurnMmps = 0;
+        g_lineFilteredErrorX8 = 0;
+        g_lineFilterReady = 0U;
         g_lineFilteredDelta = 0;
+        g_lineBaseMmps = 0;
         g_lineLostMs = 0U;
         g_leftPwm = 0;
         g_rightPwm = 0;
@@ -3583,7 +3609,10 @@ static uint8_t square_service_turn(uint32_t nowMs)
         g_squareStateStartMs = nowMs;
         g_turnCenterCount = 0U;
         g_linePreviousError = 0;
+        g_lineFilteredErrorX8 = 0;
+        g_lineFilterReady = 0U;
         g_lineFilteredDelta = 0;
+        g_lineBaseMmps = 0;
         g_lineLostMs = 0U;
         /* 停一下，让车体在惯性下自然稳定 */
         g_leftPwm = 0;
@@ -3950,17 +3979,33 @@ static void update_closed_loop(uint32_t nowMs)
 
         /* 灰度外环：根据误差计算左右差速 */
         if (valid != 0U) {
-            int16_t absoluteError = abs_i16(g_lineError);
+            int16_t absoluteError;
             int16_t turnLimit = LAB_LINE_TURN_LIMIT_MMPS;
             int16_t desiredTurn;
-            int16_t effectiveError = g_lineError;
+            int16_t effectiveError;
             int16_t turnSlew = LAB_LINE_MID_SLEW_MMPS;
             int32_t pGain = g_lineKpX1000;
             int32_t dGain = g_lineKdX1000;
             uint8_t highSpeed =
                 (baseTarget >= LAB_LINE_HIGH_SPEED_MMPS) ? 1U : 0U;
 
-            errorDelta = (int16_t)(g_lineError - g_linePreviousError);
+            if ((g_lineFilterReady == 0U) || (g_lineLostMs != 0U)) {
+                g_lineFilteredErrorX8 = (int32_t)g_lineError * 8L;
+                g_lineFilterReady = 1U;
+            } else {
+                g_lineFilteredErrorX8 =
+                    ((g_lineFilteredErrorX8 * 3L) +
+                     ((int32_t)g_lineError * 8L)) / 4L;
+            }
+            if (g_lineFilteredErrorX8 >= 0L) {
+                effectiveError = (int16_t)((g_lineFilteredErrorX8 + 4L) /
+                                           8L);
+            } else {
+                effectiveError = (int16_t)((g_lineFilteredErrorX8 - 4L) /
+                                           8L);
+            }
+            absoluteError = abs_i16(effectiveError);
+            errorDelta = (int16_t)(effectiveError - g_linePreviousError);
             g_lineFilteredDelta = (int16_t)(
                 (((int32_t)g_lineFilteredDelta * 2L) + errorDelta) / 3L);
             errorDelta = g_lineFilteredDelta;
@@ -3978,7 +4023,7 @@ static void update_closed_loop(uint32_t nowMs)
                 int32_t speedScale;
                 int16_t adaptiveTarget;
 
-                if (((int32_t)g_lineError * (int32_t)errorDelta) > 0L) {
+                if (((int32_t)effectiveError * (int32_t)errorDelta) > 0L) {
                     risk += 80L;
                 }
                 if (risk > 450L) {
@@ -4002,6 +4047,17 @@ static void update_closed_loop(uint32_t nowMs)
                 }
                 if (baseTarget > adaptiveTarget) {
                     baseTarget = adaptiveTarget;
+                }
+                if (g_lineBaseMmps <= 0) {
+                    g_lineBaseMmps = baseTarget;
+                } else {
+                    g_lineBaseMmps = clamp_i16(
+                        baseTarget,
+                        (int16_t)(g_lineBaseMmps -
+                                  LAB_GIMBAL_LINE_BASE_DECEL_MMPS),
+                        (int16_t)(g_lineBaseMmps +
+                                  LAB_GIMBAL_LINE_BASE_ACCEL_MMPS));
+                    baseTarget = g_lineBaseMmps;
                 }
             }
 #endif
@@ -4066,12 +4122,16 @@ static void update_closed_loop(uint32_t nowMs)
                 if ((gimbalLineControl != 0U) && (baseTarget > 0)) {
                     /* Curvature mixer for the heavy platform.  Below the
                      * budget the PD command is untouched.  Above it, only
-                     * the excess is compressed smoothly toward 55% of the
+                     * the excess is compressed smoothly toward 32% of the
                      * common speed.  This preserves forward motion and
                      * steering authority without the 277/29 mm/s rail split
                      * that makes the high-side wheel throw the chassis back. */
-                    int32_t mixBudget = ((int32_t)baseTarget * 40L) / 100L;
-                    int32_t mixCap = ((int32_t)baseTarget * 55L) / 100L;
+                    int32_t mixBudget =
+                        ((int32_t)baseTarget *
+                         LAB_GIMBAL_LINE_MIX_BUDGET_PCT) / 100L;
+                    int32_t mixCap =
+                        ((int32_t)baseTarget *
+                         LAB_GIMBAL_LINE_MIX_CAP_PCT) / 100L;
 
                     if (mixBudget < 20L) mixBudget = 20L;
                     if (mixCap <= mixBudget) mixCap = mixBudget + 1L;
@@ -4103,7 +4163,7 @@ static void update_closed_loop(uint32_t nowMs)
                 desiredTurn,
                 (int16_t)(g_lineTurnMmps - turnSlew),
                 (int16_t)(g_lineTurnMmps + turnSlew));
-            g_linePreviousError = g_lineError;
+            g_linePreviousError = effectiveError;
             g_lineLostMs = 0U;
         } else {
             /* 灰度无效：累加“丢线时长”，到阈值就停转 */
@@ -4415,8 +4475,11 @@ void LAB_Init(void)
     g_pendingStartMs = 0U;
     g_lineError = 0;
     g_linePreviousError = 0;
+    g_lineFilteredErrorX8 = 0;
+    g_lineFilterReady = 0U;
     g_lineFilteredDelta = 0;
     g_lineTurnMmps = 0;
+    g_lineBaseMmps = 0;
     g_lineLostMs = 0U;
     g_lineValid = 0U;
     g_lineMask = 0U;

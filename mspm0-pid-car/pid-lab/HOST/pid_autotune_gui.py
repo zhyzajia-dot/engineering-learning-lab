@@ -89,15 +89,15 @@ STRAIGHT_BIAS_MMPS = 50
 # 循迹参数的安全范围（防止越界写入）
 LINE_KP_SAFE_RANGE = (2500, 14000)
 LINE_KD_SAFE_RANGE = (500, 6000)
-GIMBAL_BOOTSTRAP_LINE_PAIR = (8250, 2250)
+GIMBAL_BOOTSTRAP_LINE_PAIR = (8250, 2350)
 GIMBAL_LINE_KP_SAFE_RANGE = (5000, 10000)
 GIMBAL_LINE_KD_SAFE_RANGE = (1200, 3500)
-GIMBAL_LINE_KP_LOCAL_STEP = 100
-GIMBAL_LINE_KD_LOCAL_STEP = 100
+GIMBAL_LINE_KP_LOCAL_STEP = 250
+GIMBAL_LINE_KD_LOCAL_STEP = 500
 
 # 自动整定评分公式的版本号；变更打分逻辑时同步 +1，
 # 旧的 champion.json 在 score_version 不匹配时会被忽略
-LINE_SCORE_VERSION = 5
+LINE_SCORE_VERSION = 6
 
 WHEEL_RUNTIME_PARAMETERS = (
     "LMIN", "LFF", "LKP", "LKI",
@@ -1937,8 +1937,12 @@ class AutoTuner:
                     candidate_pairs.append(bounded)
 
             # 当前运行值和已知稳定默认值都必须参赛；其余只做单轴局部变化。
-            add_pair(runtime_pair)
             add_pair(stable_pair)
+            # At the 250 mm/s target, do not spend the first physical lap on
+            # an old low-speed Flash pair that has already shown rail-split
+            # oscillation.  The proven heavy-gimbal champion is the incumbent
+            # and the stale runtime pair remains only as a comparison.
+            add_pair(runtime_pair)
             for kp in local_line_candidates(
                 stable_pair[0], kp_step, kp_safe_range
             ):
@@ -2329,6 +2333,21 @@ class AutoTuner:
             turn_reversals / max(4.0, len(turns) / 25.0),
         )
 
+        # A heavy chassis oscillates when one wheel is repeatedly driven near
+        # zero while the other is fast.  Penalize that ratio directly so the
+        # tuner prefers a slightly slower but common-mode-stable pair.
+        wheel_ratio_penalty = statistics.mean(
+            max(
+                0.0,
+                (0.55 - (
+                    min(abs(sample.left_target), abs(sample.right_target)) /
+                    max(1.0, max(abs(sample.left_target),
+                                  abs(sample.right_target)))
+                )) / 0.55,
+            )
+            for sample in valid
+        ) if valid else 0.0
+
         return (
             mean_error + (1.2 * p95_error) + (3.0 * far_ratio) +
             (0.9 * ripple) + (0.8 * derivative) +
@@ -2337,7 +2356,8 @@ class AutoTuner:
             (0.5 * overshoot_penalty) +
             (1.0 * snake_penalty) + (0.8 * turn_energy_penalty) +
             (0.8 * turn_step_penalty) +
-            (0.8 * reversal_penalty)
+            (0.8 * reversal_penalty) +
+            (1.8 * wheel_ratio_penalty)
         )
 
     def _score_gimbal_line(

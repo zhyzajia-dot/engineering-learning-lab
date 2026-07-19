@@ -424,7 +424,7 @@ class AlgorithmTests(unittest.TestCase):
         ]), "ABORT")
 
     def test_gimbal_line_search_starts_from_historical_champion(self) -> None:
-        self.assertEqual(gui.GIMBAL_BOOTSTRAP_LINE_PAIR, (8250, 2250))
+        self.assertEqual(gui.GIMBAL_BOOTSTRAP_LINE_PAIR, (8250, 2350))
         self.assertEqual(gui.GIMBAL_LINE_KP_SAFE_RANGE, (5000, 10000))
         self.assertEqual(gui.GIMBAL_LINE_KD_SAFE_RANGE, (1200, 3500))
 
@@ -1456,7 +1456,7 @@ class CliTests(unittest.TestCase):
                 mock.call("RFF", 520),
                 mock.call("TURNSLOW", 80),
                 mock.call("LINEKP", 8250),
-                mock.call("LINEKD", 2250),
+                mock.call("LINEKD", 2350),
                 mock.call("TURNDIST", 98),
                 mock.call("TURNFAST", 165),
                 mock.call("TURNMARGIN", 180),
