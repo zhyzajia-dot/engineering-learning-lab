@@ -4045,6 +4045,16 @@ static void update_closed_loop(uint32_t nowMs)
                     risk = 450L;
                 }
                 speedScale = 1000L - risk;
+#if LAB_ENABLE_DUAL_PROFILE
+                /* V4 keeps a constant common-mode speed while a valid line
+                 * is present.  Continuously lowering the requested speed as
+                 * the error grows changes the plant under the controller and
+                 * was observed to create a slow long-run wobble.  Braking on
+                 * an actually invalid line remains in the recovery branch. */
+                if (gimbalLineControl != 0U) {
+                    speedScale = 1000L;
+                }
+#endif
                 adaptiveTarget = (int16_t)(((int32_t)baseTarget *
                                             speedScale) / 1000L);
                 {
