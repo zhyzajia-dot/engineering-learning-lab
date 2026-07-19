@@ -4100,6 +4100,25 @@ static void update_closed_loop(uint32_t nowMs)
             }
 
             /* 高速时中心修正严格限幅；偏差越大，允许更强且更快地拉回。 */
+#if LAB_ENABLE_DUAL_PROFILE
+            if (gimbalLineControl != 0U) {
+                int16_t previousAbsoluteError =
+                    abs_i16(g_linePreviousError);
+
+                /* Use V4's trend-adaptive PD for the heavy profile: retain
+                 * authority at large error, but do not amplify P by 1.8x;
+                 * increase D while converging and reduce it while diverging. */
+                pGain = g_lineKpX1000;
+                if (absoluteError <= LAB_LINE_CENTER_ERROR) {
+                    pGain = (pGain * 3L) / 4L;
+                }
+                if (absoluteError < previousAbsoluteError) {
+                    dGain = g_lineKdX1000 * 2L;
+                } else {
+                    dGain = g_lineKdX1000 / 2L;
+                }
+            }
+#endif
             if (highSpeed != 0U) {
                 if (absoluteError <= LAB_LINE_CENTER_ERROR) {
                     turnLimit = LAB_LINE_HIGH_CENTER_LIMIT_MMPS;
