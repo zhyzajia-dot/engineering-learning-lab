@@ -33,6 +33,32 @@ The Guard18 run is the reason for Guard19: the vehicle crossed `mask=48` at trav
 
 Current HEX: 113,922 bytes, SHA-256 `8EC8207E60EC9128053D7E92ABB40C5DD9C8E798F6846F98763E03EAA7B12C96` (run `Get-FileHash -Algorithm SHA256 .\Debug\pid_lab_mspm0.hex` before flashing). This build keeps the proven adaptive common-speed scheduler, raises its valid-line floor to 90% of the request, and makes recovery toward the requested speed twice as fast; V4-style trend-adaptive P/D, filtered IMU yaw-rate damping, and actual line-loss braking remain active.
 
+## 换电脑交接（2026-07-19）
+
+### 最终目的
+
+保留 LIGHT 档的已验证 V4 循迹行为不变；GIMBAL 档适配重云台的重心、惯量和轮速响应，让小车能够在封闭逆时针方形赛道上稳定跑完整圈，并由上位机自动搜索直线 `LINEKP/LINEKD`、记录转弯几何，尽量不依赖手工逐项调参。180 mm/s 已经实车连续跑过约 6 圈；250 mm/s 仍是下一阶段的速度验证目标。
+
+### 换电脑后的最短流程
+
+1. 克隆 `https://github.com/zhyzajia-dot/engineering-learning-lab.git`，进入 `mspm0-pid-car/pid-lab`。
+2. 先烧录 `Debug/pid_lab_mspm0.hex`，烧录后不要凭 Flash 里的旧参数判断版本；连接串口后执行 `PARAM`，确认 `FLASHVER=3`，并用 `PROFILE GIMBAL` 读回重载档。
+3. 安装 Python 3 和 `HOST/requirements.txt`；命令行工具是 `HOST/pid_lab_cli.py`，不依赖 VS Code 的 Git 扩展。
+4. Windows 下先运行 `python HOST/pid_lab_cli.py diagnose --port COMx`。只有 `HELLO/STATUS/SENSOR/IMU/POWER/RADIOPING` 全部通过，才允许动车。
+5. 首次验证使用 `python HOST/pid_lab_cli.py gimbal-auto --port COMx --speed 180 --track-safe`。确认车辆在封闭方形跑道、旁边有人能断电；通过后再测试 `--speed 250`。
+
+### 固件和参数注意事项
+
+- 当前 Guard37 的 HEX 必须重新烧录；普通烧录不一定覆盖 Flash 中已有的运行参数。GIMBAL 自动任务会先加载 `LINEKP=8250/LINEKD=2350` 和重载轮速参数，再开始候选比较。
+- 不要把 LIGHT 参数保存到 GIMBAL，也不要在车辆落地时做悬空轮自动调参；轮速 PI/前馈必须在实际负载和实际电池状态下验证。
+- 绝对 IMU yaw 有比例误差，不能拿 90°读数直接当真实角度。当前转弯主要依据灰度捕线和编码器里程；IMU 角速度只用于抑制车体旋转，不是唯一转弯完成条件。
+- 自动调参失败会发送 `STOP` 并恢复任务前的 GIMBAL RAM 参数，不会保存失败候选。任何串口断开、灰度持续无效或电源异常，都应立即断电检查。
+- `HOST/logs/` 下的每次运行日志用于复盘；换电脑后请保留完整日志目录和运行速度、地图状态、固件 SHA-256，不要只凭肉眼描述结果。
+
+### 最近一次实车记录
+
+`HOST/logs/gimbal_auto_full_lap_20260719_132154`：Guard37、180 mm/s。`LINEKP=8250/LINEKD=2350` 候选记录了 6 个 `TURN CENTER`，主机评分 `4.330`；切换到旧 `6750/2000` 挑战候选后报 `LINE LOST`，任务自动回滚，未保存失败参数。这说明当前冠军起点明显优于旧起点，但完整自动搜索和 250 mm/s 验证仍需在新电脑继续。
+
 When the gray line is briefly invalid, GIMBAL control now keeps the previous search direction but immediately reduces common speed to 45% of the request (minimum 80 mm/s) and decays the turn command on each invalid sample. This avoids carrying a high-speed turn into a spin while still allowing a short gap to be reacquired.
 
 The heavy-platform correction is deliberately continuous: when the line error and filtered error velocity point outward, a bounded portion of forward speed is exchanged for capture margin; it never enters a fixed stop or a one-sided turn mode. The P term now uses a filtered line position rather than following each raw seven-sensor mask jump. The common-speed reference changes with a heavy-chassis acceleration/deceleration envelope, and the mixer smoothly compresses excess curvature toward 32% of common speed instead of commanding one wheel near zero. The measured left/right wheel-speed difference is fed back as damping, reducing alternating overshoot. The GIMBAL tuner starts from the proven `8250/2350` pair, searches a wider D range, and scores low wheel-speed ratio directly. Flash this HEX before the next run and record the telemetry directory; do not compare a run made with the previous HEX against this controller. An immutable copy is kept at `Debug/pid_lab_msp0_guard28_filtered_line_20260719.hex`.
