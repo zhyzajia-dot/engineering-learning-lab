@@ -37,7 +37,7 @@ Current HEX: 113,922 bytes, SHA-256 `8EC8207E60EC9128053D7E92ABB40C5DD9C8E798F68
 
 ### 最终目的
 
-保留 LIGHT 档的已验证 V4 循迹行为不变；GIMBAL 档适配重云台的重心、惯量和轮速响应，让小车能够在封闭逆时针方形赛道上稳定跑完整圈，并由上位机自动搜索直线 `LINEKP/LINEKD`、记录转弯几何，尽量不依赖手工逐项调参。180 mm/s 已经实车连续跑过约 6 圈；250 mm/s 仍是下一阶段的速度验证目标。
+最终目标是完成一次真正的上位机自动调参闭环：`gimbal-auto` 在同一次连续放车任务中自动试验候选 `LINEKP/LINEKD`，用完整逆时针方形圈的误差、摆动、轮速差、丢线率和出弯恢复评分，学习转弯里程/角度，交替复测冠军与挑战者，最后只保存可重复的最佳 GIMBAL 参数；随后用保存的最佳参数稳定跑完整方形。LIGHT 档的已验证 V4 循迹行为必须保持不变。180 mm/s 已经实车连续跑过约 6 圈，但最近一次自动调参在挑战候选阶段回滚，说明“能稳定跑”还不是最终完成；250 mm/s 和完整自动搜索保存仍是下一步。
 
 ### 换电脑后的最短流程
 
@@ -57,7 +57,7 @@ Current HEX: 113,922 bytes, SHA-256 `8EC8207E60EC9128053D7E92ABB40C5DD9C8E798F68
 
 ### 最近一次实车记录
 
-`HOST/logs/gimbal_auto_full_lap_20260719_132154`：Guard37、180 mm/s。`LINEKP=8250/LINEKD=2350` 候选记录了 6 个 `TURN CENTER`，主机评分 `4.330`；切换到旧 `6750/2000` 挑战候选后报 `LINE LOST`，任务自动回滚，未保存失败参数。这说明当前冠军起点明显优于旧起点，但完整自动搜索和 250 mm/s 验证仍需在新电脑继续。
+`HOST/logs/gimbal_auto_full_lap_20260719_132154`：Guard37、180 mm/s。`LINEKP=8250/LINEKD=2350` 候选记录了 6 个 `TURN CENTER`，主机评分 `4.330`；切换到旧 `6750/2000` 挑战候选后报 `LINE LOST`，任务自动回滚，未保存失败参数。该日志证明当前冠军起点明显优于旧起点，但没有把本次任务误报为“自动调参完成”：完整候选比较、重复验证、单次保存和随后最佳参数方框验证仍需在新电脑继续。
 
 When the gray line is briefly invalid, GIMBAL control now keeps the previous search direction but immediately reduces common speed to 45% of the request (minimum 80 mm/s) and decays the turn command on each invalid sample. This avoids carrying a high-speed turn into a spin while still allowing a short gap to be reacquired.
 
