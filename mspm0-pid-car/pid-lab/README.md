@@ -1,4 +1,4 @@
-# Current handoff (2026-07-18, Guard25)
+# Current handoff (2026-07-19, Guard31)
 
 ## 当前行动版：V4 式完整一圈自动调参
 
@@ -31,7 +31,9 @@ The design deliberately returns to the proven V4 ownership model instead of stac
 
 The Guard18 run is the reason for Guard19: the vehicle crossed `mask=48` at travel `75..91 mm`, but Guard18 waited until `98 mm`, then saw `mask=96/64` and stopped with `LINE NOT CAPTURED`. Guard19 moved capture back into the V4-style sweep. Guard20/21 reduced turn speed and coast; Guard22/23 proved the capture and PID handoff; Guard24's second-corner `mask=13/7` detector miss is the sole Guard25 change.
 
-Current HEX: 112,228 bytes, SHA-256 `F916A1304D59ADF12910AF342D98331D1D12B95D547CF046827E8341E459B8BE` (run `Get-FileHash -Algorithm SHA256 .\Debug\pid_lab_mspm0.hex` before flashing). This build adds measured wheel-speed damping, filtered line-position PD, jerk-limited common-speed scheduling, far-error adaptive curvature, and a slower heavy-chassis steering slew for 250 mm/s operation.
+Current HEX: 112,613 bytes, SHA-256 `B9BD36A404BE09AA152CCB1B7D44CA0C9D1CFFD3F31484459E5297664AB9F9B4` (run `Get-FileHash -Algorithm SHA256 .\Debug\pid_lab_mspm0.hex` before flashing). This build adds measured wheel-speed damping, filtered line-position PD, jerk-limited common-speed scheduling, far-error adaptive curvature, a slower heavy-chassis steering slew for 250 mm/s operation, and immediate momentum decay on the first invalid gray-line frame.
+
+When the gray line is briefly invalid, GIMBAL control now keeps the previous search direction but immediately reduces common speed to 45% of the request (minimum 80 mm/s) and decays the turn command on each invalid sample. This avoids carrying a high-speed turn into a spin while still allowing a short gap to be reacquired.
 
 The heavy-platform correction is deliberately continuous: when the line error and filtered error velocity point outward, a bounded portion of forward speed is exchanged for capture margin; it never enters a fixed stop or a one-sided turn mode. The P term now uses a filtered line position rather than following each raw seven-sensor mask jump. The common-speed reference changes with a heavy-chassis acceleration/deceleration envelope, and the mixer smoothly compresses excess curvature toward 32% of common speed instead of commanding one wheel near zero. The measured left/right wheel-speed difference is fed back as damping, reducing alternating overshoot. The GIMBAL tuner starts from the proven `8250/2350` pair, searches a wider D range, and scores low wheel-speed ratio directly. Flash this HEX before the next run and record the telemetry directory; do not compare a run made with the previous HEX against this controller. An immutable copy is kept at `Debug/pid_lab_msp0_guard28_filtered_line_20260719.hex`.
 

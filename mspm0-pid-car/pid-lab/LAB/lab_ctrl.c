@@ -4184,6 +4184,27 @@ static void update_closed_loop(uint32_t nowMs)
             if (g_lineLostMs < 60000U) {
                 g_lineLostMs = (uint16_t)(g_lineLostMs + 10U);
             }
+#if LAB_ENABLE_DUAL_PROFILE
+            if (gimbalLineControl != 0U) {
+                /* The first invalid frame is already evidence that the
+                 * sensor bar has left the track.  Do not carry a full-speed
+                 * last-turn command for another 100 ms: bleed momentum while
+                 * preserving the search direction so a short gap can still
+                 * be reacquired. */
+                int16_t searchSpeed = (int16_t)(((int32_t)g_testSpeed *
+                                                 45L) / 100L);
+                if (searchSpeed < 80) searchSpeed = 80;
+                if (baseTarget > searchSpeed) {
+                    baseTarget = searchSpeed;
+                }
+                g_lineBaseMmps = baseTarget;
+                g_lineTurnMmps = (int16_t)(((int32_t)g_lineTurnMmps *
+                                            ((g_lineLostMs <= 10U) ? 3L :
+                                             7L)) /
+                                           ((g_lineLostMs <= 10U) ? 4L :
+                                            8L));
+            }
+#endif
             if (g_lineLostMs >= lineLostStopMs) {
                 if (g_mode == LAB_MODE_SQUARE) {
                     square_abort("LINE LOST");
