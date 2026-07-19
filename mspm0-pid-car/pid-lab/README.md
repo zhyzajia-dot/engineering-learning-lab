@@ -1,4 +1,4 @@
-# Current handoff (2026-07-19, Guard32)
+# Current handoff (2026-07-19, Guard33)
 
 ## 当前行动版：V4 式完整一圈自动调参
 
@@ -31,7 +31,7 @@ The design deliberately returns to the proven V4 ownership model instead of stac
 
 The Guard18 run is the reason for Guard19: the vehicle crossed `mask=48` at travel `75..91 mm`, but Guard18 waited until `98 mm`, then saw `mask=96/64` and stopped with `LINE NOT CAPTURED`. Guard19 moved capture back into the V4-style sweep. Guard20/21 reduced turn speed and coast; Guard22/23 proved the capture and PID handoff; Guard24's second-corner `mask=13/7` detector miss is the sole Guard25 change.
 
-Current HEX: 112,799 bytes, SHA-256 `7D346EFC2B89C50E978A474A73F141EDA3FED1CA39934B82A50B951C7B7FD32D` (run `Get-FileHash -Algorithm SHA256 .\Debug\pid_lab_mspm0.hex` before flashing). This build adds measured wheel-speed damping, filtered line-position PD, jerk-limited common-speed scheduling, far-error adaptive curvature, a slower heavy-chassis steering slew for 250 mm/s operation, immediate momentum decay on the first invalid gray-line frame, and filtered encoder-difference damping.
+Current HEX: 112,905 bytes, SHA-256 `E397D7EDA6A18EE2BDCA3A51B4A52F6A7032F784425CA6C3168799B22CB8D2B2` (run `Get-FileHash -Algorithm SHA256 .\Debug\pid_lab_mspm0.hex` before flashing). This build adds measured wheel-speed damping, filtered line-position PD, jerk-limited common-speed scheduling, far-error adaptive curvature, a slower heavy-chassis steering slew for 250 mm/s operation, immediate momentum decay on the first invalid gray-line frame, filtered encoder-difference damping, and a reduced near-line P gain for heavy-chassis inertia.
 
 When the gray line is briefly invalid, GIMBAL control now keeps the previous search direction but immediately reduces common speed to 45% of the request (minimum 80 mm/s) and decays the turn command on each invalid sample. This avoids carrying a high-speed turn into a spin while still allowing a short gap to be reacquired.
 

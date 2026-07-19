@@ -119,6 +119,8 @@
 #define LAB_GIMBAL_LINE_MIN_TURN_LIMIT_MMPS 80
 #define LAB_GIMBAL_LINE_MAX_TURN_LIMIT_MMPS 160
 #define LAB_GIMBAL_LINE_LIMIT_PER_ERROR_MMPS 4
+#define LAB_GIMBAL_NEAR_LINE_ERROR          6
+#define LAB_GIMBAL_NEAR_LINE_P_GAIN_PCT    70
 #define LAB_GIMBAL_LINE_MIN_SLEW_MMPS       20
 #define LAB_GIMBAL_LINE_MAX_SLEW_MMPS       28
 #define LAB_GIMBAL_LINE_SPEED_FLOOR_MMPS    130
@@ -4078,6 +4080,15 @@ static void update_closed_loop(uint32_t nowMs)
                 int32_t boost = 1000L + ((int32_t)absoluteError * 40L);
                 if (boost > 1800L) boost = 1800L;
                 pGain = (pGain * boost) / 1000L;
+#if LAB_ENABLE_DUAL_PROFILE
+                if ((gimbalLineControl != 0U) &&
+                    (absoluteError <= LAB_GIMBAL_NEAR_LINE_ERROR)) {
+                    /* Keep full P/D authority for far errors, but soften
+                     * the +/-6 near-line band where inertia overshoots. */
+                    pGain = (pGain * LAB_GIMBAL_NEAR_LINE_P_GAIN_PCT) /
+                            100L;
+                }
+#endif
             }
 
             /* D 项使用滤波差分；收敛时适度刹车，避免原先 2 倍 D 反打。 */
