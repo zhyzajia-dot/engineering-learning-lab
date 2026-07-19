@@ -127,6 +127,8 @@
 #define LAB_GIMBAL_WHEEL_DAMP_X1000        450
 #define LAB_GIMBAL_LINE_MIX_BUDGET_PCT       12
 #define LAB_GIMBAL_LINE_MIX_CAP_PCT          32
+#define LAB_GIMBAL_LINE_FAR_MIX_BUDGET_PCT   20
+#define LAB_GIMBAL_LINE_FAR_MIX_CAP_PCT      45
 #define LAB_GIMBAL_LINE_BASE_DECEL_MMPS      10
 #define LAB_GIMBAL_LINE_BASE_ACCEL_MMPS       5
 #define LAB_GIMBAL_GSTART_LIMIT_MMPS           35
@@ -4126,12 +4128,24 @@ static void update_closed_loop(uint32_t nowMs)
                      * common speed.  This preserves forward motion and
                      * steering authority without the 277/29 mm/s rail split
                      * that makes the high-side wheel throw the chassis back. */
-                    int32_t mixBudget =
-                        ((int32_t)baseTarget *
-                         LAB_GIMBAL_LINE_MIX_BUDGET_PCT) / 100L;
-                    int32_t mixCap =
-                        ((int32_t)baseTarget *
-                         LAB_GIMBAL_LINE_MIX_CAP_PCT) / 100L;
+                    int32_t budgetPct = LAB_GIMBAL_LINE_MIX_BUDGET_PCT;
+                    int32_t capPct = LAB_GIMBAL_LINE_MIX_CAP_PCT;
+                    int32_t mixBudget;
+                    int32_t mixCap;
+
+                    /* A sustained far-side reading needs real curvature to
+                     * return before the line leaves the sensor bar.  Open
+                     * that authority only while the filtered error is still
+                     * moving outward; as soon as D reports recovery, return
+                     * to the quiet common-mode mix. */
+                    if ((absoluteError >= LAB_LINE_FAR_ERROR) &&
+                        (((int32_t)effectiveError *
+                          (int32_t)errorDelta) >= 0L)) {
+                        budgetPct = LAB_GIMBAL_LINE_FAR_MIX_BUDGET_PCT;
+                        capPct = LAB_GIMBAL_LINE_FAR_MIX_CAP_PCT;
+                    }
+                    mixBudget = ((int32_t)baseTarget * budgetPct) / 100L;
+                    mixCap = ((int32_t)baseTarget * capPct) / 100L;
 
                     if (mixBudget < 20L) mixBudget = 20L;
                     if (mixCap <= mixBudget) mixCap = mixBudget + 1L;
