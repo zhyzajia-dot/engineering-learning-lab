@@ -127,6 +127,8 @@
 #define LAB_GIMBAL_LINE_SPEED_DROP_START_ERROR 10
 #define LAB_GIMBAL_LINE_SPEED_DROP_PER_ERROR_MMPS 2
 #define LAB_GIMBAL_WHEEL_DAMP_X1000        450
+#define LAB_GIMBAL_YAW_RATE_DAMP_MMPS_X10   6
+#define LAB_GIMBAL_YAW_RATE_LIMIT_X10      20
 #define LAB_GIMBAL_LINE_MIX_BUDGET_PCT       12
 #define LAB_GIMBAL_LINE_MIX_CAP_PCT          32
 #define LAB_GIMBAL_LINE_FAR_MIX_BUDGET_PCT   20
@@ -471,6 +473,9 @@ static int16_t g_lineBaseMmps = 0;
 /* Low-pass the 10 ms encoder difference before using it as outer-loop
  * damping; count quantization otherwise becomes steering noise. */
 static int16_t g_lineWheelDiffFiltered = 0;
+static int16_t g_lineYawRateFilteredX10 = 0;
+static int16_t g_linePreviousYawX10 = 0;
+static uint8_t g_lineYawRateReady = 0U;
 /* 失去线的累计时间（ms） */
 static uint16_t g_lineLostMs = 0U;
 /* 最近一次循迹误差是否有效 */
@@ -4150,6 +4155,7 @@ static void update_closed_loop(uint32_t nowMs)
 #endif
             {
                 int16_t wheelDiff = (int16_t)(leftSpeed - rightSpeed);
+                int16_t yawRateX10 = 0;
 
                 /* Keep real left/right asymmetry, but reject one-sample
                  * encoder spikes before they become a steering command. */
@@ -4160,11 +4166,43 @@ static void update_closed_loop(uint32_t nowMs)
                         (((int32_t)g_lineWheelDiffFiltered * 3L) +
                          wheelDiff) / 4L);
                 }
+#if LAB_ENABLE_DUAL_PROFILE
+                if ((gimbalLineControl != 0U) &&
+                    (IMU_IsReady() != 0U)) {
+                    int16_t yawX10 = IMU_GetRelativeYawX10();
+                    if ((filterReset != 0U) ||
+                        (g_lineYawRateReady == 0U)) {
+                        g_linePreviousYawX10 = yawX10;
+                        g_lineYawRateFilteredX10 = 0;
+                        g_lineYawRateReady = 1U;
+                    } else {
+                        int16_t yawDeltaX10 =
+                            (int16_t)(yawX10 - g_linePreviousYawX10);
+                        if (yawDeltaX10 > 1800) yawDeltaX10 -= 3600;
+                        if (yawDeltaX10 < -1800) yawDeltaX10 += 3600;
+                        yawDeltaX10 = clamp_i16(
+                            yawDeltaX10,
+                            (int16_t)-LAB_GIMBAL_YAW_RATE_LIMIT_X10,
+                            LAB_GIMBAL_YAW_RATE_LIMIT_X10);
+                        g_lineYawRateFilteredX10 = (int16_t)(
+                            (((int32_t)g_lineYawRateFilteredX10 * 3L) +
+                             yawDeltaX10) / 4L);
+                        g_linePreviousYawX10 = yawX10;
+                    }
+                    yawRateX10 = g_lineYawRateFilteredX10;
+                } else {
+                    g_lineYawRateReady = 0U;
+                    g_lineYawRateFilteredX10 = 0;
+                }
+#endif
                 int32_t rawTurn =
-                    ((pGain * effectiveError) +
-                     (dGain * errorDelta) -
-                     (((int32_t)g_lineWheelDiffFiltered *
-                       LAB_GIMBAL_WHEEL_DAMP_X1000) / 1000L)) / 1000L;
+                    (((pGain * effectiveError) +
+                      (dGain * errorDelta) -
+                      (((int32_t)g_lineWheelDiffFiltered *
+                        LAB_GIMBAL_WHEEL_DAMP_X1000) / 1000L)) /
+                     1000L) +
+                    ((int32_t)yawRateX10 *
+                     LAB_GIMBAL_YAW_RATE_DAMP_MMPS_X10);
                 int32_t absoluteTurn = (rawTurn >= 0L) ? rawTurn : -rawTurn;
 
 #if LAB_ENABLE_DUAL_PROFILE
