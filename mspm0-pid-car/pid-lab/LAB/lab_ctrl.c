@@ -466,6 +466,9 @@ static int16_t g_lineFilteredDelta = 0;
 static int16_t g_lineTurnMmps = 0;
 /* Smoothed common forward-speed reference for heavy-gimbal curvature control. */
 static int16_t g_lineBaseMmps = 0;
+/* Low-pass the 10 ms encoder difference before using it as outer-loop
+ * damping; count quantization otherwise becomes steering noise. */
+static int16_t g_lineWheelDiffFiltered = 0;
 /* 失去线的累计时间（ms） */
 static uint16_t g_lineLostMs = 0U;
 /* 最近一次循迹误差是否有效 */
@@ -3988,10 +3991,13 @@ static void update_closed_loop(uint32_t nowMs)
             int16_t turnSlew = LAB_LINE_MID_SLEW_MMPS;
             int32_t pGain = g_lineKpX1000;
             int32_t dGain = g_lineKdX1000;
+            uint8_t filterReset =
+                ((g_lineFilterReady == 0U) || (g_lineLostMs != 0U)) ?
+                1U : 0U;
             uint8_t highSpeed =
                 (baseTarget >= LAB_LINE_HIGH_SPEED_MMPS) ? 1U : 0U;
 
-            if ((g_lineFilterReady == 0U) || (g_lineLostMs != 0U)) {
+            if (filterReset != 0U) {
                 g_lineFilteredErrorX8 = (int32_t)g_lineError * 8L;
                 g_lineFilterReady = 1U;
             } else {
@@ -4113,10 +4119,21 @@ static void update_closed_loop(uint32_t nowMs)
             }
 #endif
             {
+                int16_t wheelDiff = (int16_t)(leftSpeed - rightSpeed);
+
+                /* Keep real left/right asymmetry, but reject one-sample
+                 * encoder spikes before they become a steering command. */
+                if (filterReset != 0U) {
+                    g_lineWheelDiffFiltered = wheelDiff;
+                } else {
+                    g_lineWheelDiffFiltered = (int16_t)(
+                        (((int32_t)g_lineWheelDiffFiltered * 3L) +
+                         wheelDiff) / 4L);
+                }
                 int32_t rawTurn =
                     ((pGain * effectiveError) +
                      (dGain * errorDelta) -
-                     (((int32_t)(leftSpeed - rightSpeed) *
+                     (((int32_t)g_lineWheelDiffFiltered *
                        LAB_GIMBAL_WHEEL_DAMP_X1000) / 1000L)) / 1000L;
                 int32_t absoluteTurn = (rawTurn >= 0L) ? rawTurn : -rawTurn;
 
