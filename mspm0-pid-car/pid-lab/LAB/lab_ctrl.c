@@ -133,8 +133,8 @@
 #define LAB_GIMBAL_LINE_MIX_CAP_PCT          32
 #define LAB_GIMBAL_LINE_FAR_MIX_BUDGET_PCT   20
 #define LAB_GIMBAL_LINE_FAR_MIX_CAP_PCT      45
-#define LAB_GIMBAL_LINE_BASE_DECEL_MMPS      10
-#define LAB_GIMBAL_LINE_BASE_ACCEL_MMPS       5
+#define LAB_GIMBAL_LINE_BASE_DECEL_MMPS       5
+#define LAB_GIMBAL_LINE_BASE_ACCEL_MMPS      10
 #define LAB_GIMBAL_GSTART_LIMIT_MMPS           35
 #define LAB_GIMBAL_EXIT_TURN_LIMIT_MMPS     160
 #define LAB_GIMBAL_EXIT_TOTAL_LIMIT_MMPS    160
@@ -4045,16 +4045,6 @@ static void update_closed_loop(uint32_t nowMs)
                     risk = 450L;
                 }
                 speedScale = 1000L - risk;
-#if LAB_ENABLE_DUAL_PROFILE
-                /* V4 keeps a constant common-mode speed while a valid line
-                 * is present.  Continuously lowering the requested speed as
-                 * the error grows changes the plant under the controller and
-                 * was observed to create a slow long-run wobble.  Braking on
-                 * an actually invalid line remains in the recovery branch. */
-                if (gimbalLineControl != 0U) {
-                    speedScale = 1000L;
-                }
-#endif
                 adaptiveTarget = (int16_t)(((int32_t)baseTarget *
                                             speedScale) / 1000L);
                 {
@@ -4066,6 +4056,15 @@ static void update_closed_loop(uint32_t nowMs)
                     if (g_testSpeed > 180) {
                         speedFloor = (int16_t)(g_testSpeed - 70);
                     }
+#if LAB_ENABLE_DUAL_PROFILE
+                    if (gimbalLineControl != 0U) {
+                        int16_t requestedFloor =
+                            (int16_t)(((int32_t)g_testSpeed * 90L) / 100L);
+                        if (speedFloor < requestedFloor) {
+                            speedFloor = requestedFloor;
+                        }
+                    }
+#endif
                     if (adaptiveTarget < speedFloor) {
                         adaptiveTarget = speedFloor;
                     }
